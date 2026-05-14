@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nfpp_sodium_ion"
+version = "0.1.0"
+description = "NFPP Sodium-ion base parameter package for PyBaMM"
+authors = [
+    {name = "Paul Admin", email = "paul_admin@example.com"},
+]
+dependencies = [
+    "numpy>=1.24.0",
+    "scipy>=1.10.0",
+    "pybamm>=1.0.0",
+]
+requires-python = ">=3.8"
+
+[project.entry-points.pybamm_parameter_sets]
+nfpp_sodium_ion = "nfpp_sodium_ion:get_parameter_values"
+
+[tool.setuptools.packages.find]
+where = ["src"]
