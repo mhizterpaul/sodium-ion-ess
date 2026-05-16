@@ -7,3 +7,6 @@ __all__ = [
     "SwellingCoefficientsModel",
     "ThermalExpansionModel",
 ]
+
+# Note: FEniCSx infrastructure code previously here was simplified to support parameter-only focus.
+# If full structural simulation is needed, refer to src/simulation/thermoelastic_strain.py

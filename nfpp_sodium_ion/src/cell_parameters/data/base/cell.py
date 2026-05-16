@@ -11,7 +11,7 @@ class CellParameters:
     anode_collector_thickness_um: float = 10.0
     separator_thickness_um: float = 20.0
     casing_thickness_um: float = 40.0
-    number_of_layers: int = 14
+    number_of_layers: int = 42
 
     def as_dict(self) -> dict:
         return {

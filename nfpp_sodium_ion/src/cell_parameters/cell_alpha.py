@@ -12,6 +12,7 @@ def nfpp_diffusivity_literature(sto, T):
     return D_ref * arrhenius
 
 def nfpp_ocp_literature(sto):
+    # Plateau around 3.0V
     u_eq = 3.11 - 0.5 * sto + 0.1 * np.exp(-100 * sto) - 0.1 * np.exp(-100 * (1 - sto))
     return u_eq
 
@@ -25,8 +26,8 @@ def hard_carbon_ocp_literature(sto):
     u_eq = 0.1 * np.exp(-20 * sto) + 0.05 * (1 - sto)
     return u_eq
 
-def electrolyte_exchange_current_density_sodium(c_e, c_s_surf, c_s_max, T):
-    m_ref = 2e-5 # Consistent with Chayambuka/Graphite
+def exchange_current_density_sodium(c_e, c_s_surf, c_s_max, T):
+    m_ref = 2e-5
     E_r = 35000
     arrhenius = np.exp(E_r / pybamm.constants.R * (1 / 298.15 - 1 / T))
     return m_ref * arrhenius * c_e**0.5 * c_s_surf**0.5 * (c_s_max - c_s_surf) ** 0.5
@@ -38,10 +39,7 @@ def get_parameter_values():
     elastic = ElasticModuliModel()
 
     F = 96485.332
-    # NFPP: c_max = rho / M
-    # M_nfpp = 0.27577 kg/mol
     c_max_p = cathode.density_kg_m3 / 0.27577
-    # Hard Carbon: c_max = (Cap_mAh_g * rho * 3600) / (F * 1000) = (Cap_Ah_kg * rho * 3600) / F
     c_max_n = (anode.practical_capacity_mAh_g * anode.density_kg_m3 * 3600.0) / F
 
     return {
@@ -51,8 +49,8 @@ def get_parameter_values():
         "Separator thickness [m]": cell.separator_thickness_um * 1e-6,
         "Positive electrode thickness [m]": 0.0001,
         "Positive current collector thickness [m]": cell.cathode_collector_thickness_um * 1e-6,
-        "Electrode height [m]": 0.137,
-        "Electrode width [m]": 0.207,
+        "Electrode height [m]": 0.130,
+        "Electrode width [m]": 0.070,
         "Number of electrodes connected in parallel to make a cell": float(cell.number_of_layers),
         "Nominal cell capacity [A.h]": cell.capacity_ah,
         "Current function [A]": cell.capacity_ah,
@@ -67,7 +65,7 @@ def get_parameter_values():
         "Negative electrode Bruggeman coefficient (electrolyte)": 1.5,
         "Negative electrode Bruggeman coefficient (electrode)": 1.5,
         "Negative electrode charge transfer coefficient": 0.5,
-        "Negative electrode exchange-current density [A.m-2]": electrolyte_exchange_current_density_sodium,
+        "Negative electrode exchange-current density [A.m-2]": exchange_current_density_sodium,
         "Negative electrode density [kg.m-3]": anode.density_kg_m3,
         "Negative electrode Young's modulus [Pa]": 10.0e9,
         "Negative electrode Poisson's ratio": 0.3,
@@ -84,7 +82,7 @@ def get_parameter_values():
         "Positive electrode Bruggeman coefficient (electrolyte)": 1.5,
         "Positive electrode Bruggeman coefficient (electrode)": 1.5,
         "Positive electrode charge transfer coefficient": 0.5,
-        "Positive electrode exchange-current density [A.m-2]": electrolyte_exchange_current_density_sodium,
+        "Positive electrode exchange-current density [A.m-2]": exchange_current_density_sodium,
         "Positive electrode density [kg.m-3]": cathode.density_kg_m3,
         "Positive electrode Young's modulus [Pa]": elastic.youngs_modulus_pa,
         "Positive electrode Poisson's ratio": elastic.poisson_ratio,

@@ -8,10 +8,9 @@ class DiffusivityModel:
     activation_energy_j_mol: float = 30000.0
 
     def effective_diffusivity(self, temperature_k: float, porosity: float) -> float:
-        # R = 8.314
-        # arrhenius = np.exp(self.activation_energy_j_mol / R * (1 / 298.15 - 1 / temperature_k))
-        # return self.reference_diffusivity_m2_s * arrhenius * porosity**1.5
-        pass
+        R = 8.314
+        arrhenius = np.exp(self.activation_energy_j_mol / R * (1 / 298.15 - 1 / temperature_k))
+        return self.reference_diffusivity_m2_s * arrhenius * porosity**1.5
 
     def as_dict(self) -> dict:
         return {
