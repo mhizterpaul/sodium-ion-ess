@@ -1,3 +1,5 @@
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/yourname/sodium-ion-ess/blob/main/src/report.ipynb)
+
 # NFPP Sodium-Ion Energy Storage System
 
 Complete scaffold and boilerplate for NFPP (sodium iron pyrophosphate) sodium-ion battery parameter package, validation models, and FEniCSx mechanics coupling.

@@ -12,23 +12,31 @@ __all__ = [
     "ElectrochemicalThermalDriverModel",
     "ThermalFieldModel",
     "ThermoelasticStrainModel",
+    "SimulationPlatform",
 ]
 
-# Utility classes and platform infrastructure for downstream simulation
 class SimulationPlatform:
     """Infrastructure layer for managing coupled simulations."""
 
-    @staticmethod
-    def initialize_coupled_problem(parameter_set):
-        """Prepares the coupled electrochemical-thermal-mechanical environment."""
-        # Initialize models
-        electro_thermal = ElectrochemicalThermalDriverModel()
-        thermal_field = ThermalFieldModel()
-        mechanics = ThermoelasticStrainModel()
+    def __init__(self, parameter_set):
+        self.params = parameter_set
+        self.electro_thermal = ElectrochemicalThermalDriverModel()
+        self.thermal_field = ThermalFieldModel()
+        self.mechanics = ThermoelasticStrainModel()
+
+    def run_coupled_simulation(self, times):
+        """Executes the coupled DFN-Thermal-Strain pipeline."""
+        # 1. Electrochemical-Thermal resolution
+        model_dict = self.electro_thermal.build_model(self.params)
+        et_sol = self.electro_thermal.simulate(model_dict, times)
+
+        # 2. Thermal Field propagation
+        # (Placeholder for T(x,t) resolution)
+
+        # 3. Thermoelastic Strain evaluation
+        mech_model = self.mechanics.build_model(self.params)
 
         return {
-            "electro_thermal": electro_thermal,
-            "thermal_field": thermal_field,
-            "mechanics": mechanics,
-            "parameters": parameter_set
+            "electro_thermal": et_sol,
+            "mechanics": mech_model,
         }

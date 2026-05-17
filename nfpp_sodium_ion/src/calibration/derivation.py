@@ -1,4 +1,5 @@
 import numpy as np
+import pybamm
 
 # --- 1. Material Properties (Core References) ---
 # NFPP Cathode: Na2FeP2O7
@@ -32,10 +33,16 @@ def get_derived_parameters():
     eps_am_p = compute_volume_fractions(0.85, 0.08, 0.07, NFPP_DENSITY, CARBON_DENSITY, BINDER_DENSITY, 0.3)
     eps_am_n = compute_volume_fractions(0.88, 0.06, 0.06, HC_DENSITY, CARBON_DENSITY, BINDER_DENSITY, 0.3)
 
+    # Simulation-based layer determination
+    area = 0.130 * 0.070
+    L_p = 0.0001
+    cap_layer = (area * L_p * eps_am_p * c_max_p * F) / 3600
+    n_layers = int(np.ceil(10.0 / cap_layer))
+
     return {
         "c_max_p": c_max_p,
         "c_max_n": c_max_n,
         "eps_am_p": eps_am_p,
         "eps_am_n": eps_am_n,
-        "n_layers_10ah": 66,
+        "n_layers_10ah": n_layers,
     }

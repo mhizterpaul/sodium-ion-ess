@@ -32,13 +32,18 @@ def exchange_current_density_sodium(c_e, c_s_surf, c_s_max, T):
     arrhenius = np.exp(E_r / pybamm.constants.R * (1 / 298.15 - 1 / T))
     return m_ref * arrhenius * c_e**0.5 * c_s_surf**0.5 * (c_s_max - c_s_surf) ** 0.5
 
+def current_function(t):
+    """
+    Returns the current at time t.
+    Supports variable current profiles via InputParameter.
+    """
+    return pybamm.InputParameter("Current [A]")
+
 def get_parameter_values():
     cathode = NfppCathodeParameters()
     anode = HardCarbonAnodeParameters()
     cell = CellParameters()
     elastic = ElasticModuliModel()
-
-    # Programmatically link derived parameters
     derived = get_derived_parameters()
 
     return {
@@ -52,7 +57,7 @@ def get_parameter_values():
         "Electrode width [m]": 0.070,
         "Number of electrodes connected in parallel to make a cell": float(derived["n_layers_10ah"]),
         "Nominal cell capacity [A.h]": cell.capacity_ah,
-        "Current function [A]": cell.capacity_ah,
+        "Current function [A]": current_function,
         "Contact resistance [Ohm]": 0,
         "Negative electrode conductivity [S.m-1]": 256.0,
         "Maximum concentration in negative electrode [mol.m-3]": derived["c_max_n"],
