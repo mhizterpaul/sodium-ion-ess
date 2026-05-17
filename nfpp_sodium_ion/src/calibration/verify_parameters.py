@@ -6,10 +6,11 @@ def verify():
     params_dict = get_parameter_values()
     params = pybamm.ParameterValues(params_dict)
 
-    # Use DFN for full fidelity verification
     model = pybamm.lithium_ion.DFN()
 
-    # 0.1C Discharge
+    # Check 1C discharge (10A)
+    # If parameters (kinetics/diffusivity) are too restrictive, it might fail quickly.
+    # Let's verify capacity at 0.1C to ensure stoichiometry is correct.
     params["Current function [A]"] = 1.0
 
     sim = pybamm.Simulation(model, parameter_values=params)

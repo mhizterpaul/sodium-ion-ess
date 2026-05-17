@@ -3,6 +3,7 @@ import pybamm
 from .data.electrodes.nfpp_cathode import NfppCathodeParameters
 from .data.electrodes.hard_carbon_anode import HardCarbonAnodeParameters
 from .data.mechanics.elastic_moduli import ElasticModuliModel
+from .data.mechanics.swelling_coefficients import SwellingCoefficientModel
 from .data.base.cell import CellParameters
 
 def nfpp_diffusivity_literature(sto, T):
@@ -12,7 +13,6 @@ def nfpp_diffusivity_literature(sto, T):
     return D_ref * arrhenius
 
 def nfpp_ocp_literature(sto):
-    # Plateau around 3.0V
     u_eq = 3.11 - 0.5 * sto + 0.1 * np.exp(-100 * sto) - 0.1 * np.exp(-100 * (1 - sto))
     return u_eq
 
@@ -37,8 +37,12 @@ def get_parameter_values():
     anode = HardCarbonAnodeParameters()
     cell = CellParameters()
     elastic = ElasticModuliModel()
+    swelling = SwellingCoefficientModel()
 
     F = 96485.332
+    # Physically consistent volume fractions derived in parameter_derivation.py
+    eps_am_p = 0.539
+    eps_am_n = 0.631
     c_max_p = cathode.density_kg_m3 / 0.27577
     c_max_n = (anode.practical_capacity_mAh_g * anode.density_kg_m3 * 3600.0) / F
 
@@ -60,7 +64,7 @@ def get_parameter_values():
         "Negative particle diffusivity [m2.s-1]": hard_carbon_diffusivity_literature,
         "Negative electrode OCP [V]": hard_carbon_ocp_literature,
         "Negative electrode porosity": 0.3,
-        "Negative electrode active material volume fraction": anode.active_material_fraction,
+        "Negative electrode active material volume fraction": eps_am_n,
         "Negative particle radius [m]": 5e-06,
         "Negative electrode Bruggeman coefficient (electrolyte)": 1.5,
         "Negative electrode Bruggeman coefficient (electrode)": 1.5,
@@ -77,7 +81,7 @@ def get_parameter_values():
         "Positive particle diffusivity [m2.s-1]": nfpp_diffusivity_literature,
         "Positive electrode OCP [V]": nfpp_ocp_literature,
         "Positive electrode porosity": 0.3,
-        "Positive electrode active material volume fraction": cathode.active_material_fraction,
+        "Positive electrode active material volume fraction": eps_am_p,
         "Positive particle radius [m]": 1e-06,
         "Positive electrode Bruggeman coefficient (electrolyte)": 1.5,
         "Positive electrode Bruggeman coefficient (electrode)": 1.5,
