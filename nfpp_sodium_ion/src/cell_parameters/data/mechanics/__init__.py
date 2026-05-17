@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 try:
-    import nfpp_hardcarbon.src.cell_parameters.data.mechanics as mechanics
+    import nfpp_sodium_ion.src.cell_parameters.data.mechanics as mechanics
     from mechanical.fem import Function, FunctionSpace, VectorFunctionSpace
     from mechanical.mesh import Mesh, create_rectangle, CellType
     import ufl

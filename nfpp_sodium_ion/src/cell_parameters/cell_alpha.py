@@ -1,9 +1,9 @@
 import numpy as np
 import pybamm
+from ..calibration.derivation import get_derived_parameters
 from .data.electrodes.nfpp_cathode import NfppCathodeParameters
 from .data.electrodes.hard_carbon_anode import HardCarbonAnodeParameters
 from .data.mechanics.elastic_moduli import ElasticModuliModel
-from .data.mechanics.swelling_coefficients import SwellingCoefficientModel
 from .data.base.cell import CellParameters
 
 def nfpp_diffusivity_literature(sto, T):
@@ -37,14 +37,9 @@ def get_parameter_values():
     anode = HardCarbonAnodeParameters()
     cell = CellParameters()
     elastic = ElasticModuliModel()
-    swelling = SwellingCoefficientModel()
 
-    F = 96485.332
-    # Physically consistent volume fractions derived in parameter_derivation.py
-    eps_am_p = 0.539
-    eps_am_n = 0.631
-    c_max_p = cathode.density_kg_m3 / 0.27577
-    c_max_n = (anode.practical_capacity_mAh_g * anode.density_kg_m3 * 3600.0) / F
+    # Programmatically link derived parameters
+    derived = get_derived_parameters()
 
     return {
         "chemistry": "sodium_ion",
@@ -55,16 +50,16 @@ def get_parameter_values():
         "Positive current collector thickness [m]": cell.cathode_collector_thickness_um * 1e-6,
         "Electrode height [m]": 0.130,
         "Electrode width [m]": 0.070,
-        "Number of electrodes connected in parallel to make a cell": float(cell.number_of_layers),
+        "Number of electrodes connected in parallel to make a cell": float(derived["n_layers_10ah"]),
         "Nominal cell capacity [A.h]": cell.capacity_ah,
         "Current function [A]": cell.capacity_ah,
         "Contact resistance [Ohm]": 0,
         "Negative electrode conductivity [S.m-1]": 256.0,
-        "Maximum concentration in negative electrode [mol.m-3]": c_max_n,
+        "Maximum concentration in negative electrode [mol.m-3]": derived["c_max_n"],
         "Negative particle diffusivity [m2.s-1]": hard_carbon_diffusivity_literature,
         "Negative electrode OCP [V]": hard_carbon_ocp_literature,
         "Negative electrode porosity": 0.3,
-        "Negative electrode active material volume fraction": eps_am_n,
+        "Negative electrode active material volume fraction": derived["eps_am_n"],
         "Negative particle radius [m]": 5e-06,
         "Negative electrode Bruggeman coefficient (electrolyte)": 1.5,
         "Negative electrode Bruggeman coefficient (electrode)": 1.5,
@@ -77,11 +72,11 @@ def get_parameter_values():
         "Negative electrode specific heat capacity [J.kg-1.K-1]": 700.0,
         "Negative electrode thermal conductivity [W.m-1.K-1]": 1.7,
         "Positive electrode conductivity [S.m-1]": 50.0,
-        "Maximum concentration in positive electrode [mol.m-3]": c_max_p,
+        "Maximum concentration in positive electrode [mol.m-3]": derived["c_max_p"],
         "Positive particle diffusivity [m2.s-1]": nfpp_diffusivity_literature,
         "Positive electrode OCP [V]": nfpp_ocp_literature,
         "Positive electrode porosity": 0.3,
-        "Positive electrode active material volume fraction": eps_am_p,
+        "Positive electrode active material volume fraction": derived["eps_am_p"],
         "Positive particle radius [m]": 1e-06,
         "Positive electrode Bruggeman coefficient (electrolyte)": 1.5,
         "Positive electrode Bruggeman coefficient (electrode)": 1.5,
@@ -108,6 +103,6 @@ def get_parameter_values():
         "Initial temperature [K]": 298.15,
         "Lower voltage cut-off [V]": 2.0,
         "Upper voltage cut-off [V]": 3.8,
-        "Initial concentration in negative electrode [mol.m-3]": 0.95 * c_max_n,
-        "Initial concentration in positive electrode [mol.m-3]": 0.05 * c_max_p,
+        "Initial concentration in negative electrode [mol.m-3]": 0.95 * derived["c_max_n"],
+        "Initial concentration in positive electrode [mol.m-3]": 0.05 * derived["c_max_p"],
     }

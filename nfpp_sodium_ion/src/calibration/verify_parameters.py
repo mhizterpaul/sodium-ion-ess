@@ -6,11 +6,12 @@ def verify():
     params_dict = get_parameter_values()
     params = pybamm.ParameterValues(params_dict)
 
-    model = pybamm.lithium_ion.DFN()
+    try:
+        model = pybamm.sodium_ion.DFN()
+    except AttributeError:
+        model = pybamm.lithium_ion.DFN()
 
-    # Check 1C discharge (10A)
-    # If parameters (kinetics/diffusivity) are too restrictive, it might fail quickly.
-    # Let's verify capacity at 0.1C to ensure stoichiometry is correct.
+    # 0.1C Discharge
     params["Current function [A]"] = 1.0
 
     sim = pybamm.Simulation(model, parameter_values=params)
