@@ -1,8 +1,7 @@
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/yourname/sodium-ion-ess/blob/main/src/report.ipynb)
-
 # NFPP Sodium-Ion Energy Storage System
 
-Complete scaffold and boilerplate for NFPP (sodium iron pyrophosphate) sodium-ion battery parameter package, validation models, and FEniCSx mechanics coupling.
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mhizterpaul/sodium-ion-ess/blob/main/src/report.ipynb)
+
 
 ## Module Overview
 
@@ -41,7 +40,7 @@ model = pybamm.lithium_ion.DFN()
 - **kinetics**: Reaction rates and exchange current density
 - **degradation**: SEI/CEI growth and sodium-equivalent loss models
 
-### 2. Validation Models (`src/evaluation/`)
+### 2. Validation Models (`src/simulation/`)
 
 Three coupled evaluation/validation models aligned with models.md requirements:
 
@@ -134,17 +133,7 @@ mech_model = ThermoelasticStrainModel()
    - Failure criterion: ε_crit = min(strain at damage initiation)
    - Endurance: (n_crit, t_crit) = f(ε_int)
 
-## Key Boilerplate Features
-
-✅ **Dataclass-based parameter objects** with `as_dict()` serialization  
-✅ **PyBaMM entry point registration** via pyproject.toml  
-✅ **FEniCSx function space compatibility** for direct parameter-to-FEM mapping  
-✅ **Three validation model scaffolds** with detailed docstrings  
-✅ **Temperature-dependent transport** (diffusivity, conductivity)  
-✅ **Coupled thermal-mechanical forcing** (T → ε_thermal, SOC → ε_swelling)  
-✅ **Failure criterion and endurance metrics** for structural assessment  
-
-## Future Extensions
+## TO DO
 
 - Implement full DFN solver in electrochemical_thermal_driver.py
 - Add resolved thermal PDE solver in ThermalFieldModel
@@ -155,7 +144,7 @@ mech_model = ThermoelasticStrainModel()
 
 ## References
 
-- models.md: System architecture and validation framework specification
+- Research Paper.docx: System architecture and validation framework specification
 - PyBaMM parameter set conventions: https://pybamm.readthedocs.io/
 - FEniCSx mechanics tutorial: https://docs.fenicsproject.org/
 
