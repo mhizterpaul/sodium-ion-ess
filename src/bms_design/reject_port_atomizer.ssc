@@ -1,0 +1,36 @@
+component reject_port_atomizer
+% Atomized Reject-Port Cooling System
+% Ref: docs/paper.md section 6 & 7
+
+nodes
+    thermal_in = foundation.thermal.thermal; % From tubing:left
+    ambient    = foundation.thermal.thermal; % Air:right
+end
+
+parameters
+    A_fins = {0.5, 'm^2'};      % Total fin area
+    Lv = {2260e3, 'J/kg'};      % Latent heat of vaporization
+    h_conv = {50, 'W/(m^2*K)'}; % Air convection coefficient
+    T_threshold = {313.15, 'K'};% 40C activation
+end
+
+variables
+    m_evap = {0, 'kg/s'};
+    T_s = {298.15, 'K'};
+end
+
+equations
+    T_s == thermal_in.T;
+
+    % Heat Rejection: Q = hA(Ts - Tamb) + mdot_evap * Lv
+    let
+        Q_conv = h_conv * A_fins * (T_s - ambient.T);
+        atomizer_active = if T_s > T_threshold, 1 else 0 end;
+        Q_evap = atomizer_active * 0.001 * Lv; % 1g/s evaporation when active
+    in
+        thermal_in.Q == Q_conv + Q_evap;
+        ambient.Q == -thermal_in.Q;
+    end
+end
+
+end

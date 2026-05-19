@@ -1,0 +1,43 @@
+component coolant_tubing
+% Coolant Tubing Network (Copper microtube)
+% Ref: docs/paper.md section 4
+
+nodes
+    wall = foundation.thermal.thermal; % Tube wall:top
+    inlet = foundation.thermal.thermal;  % Fluid inlet:left
+    outlet = foundation.thermal.thermal; % Fluid outlet:right
+end
+
+parameters
+    k_tube = {390, 'W/(m*K)'};
+    d_inner = {0.006, 'm'};    % 6mm ID
+    t_wall = {0.001, 'm'};     % 1mm wall
+    length = {0.5, 'm'};       % Tube length per cell
+    cp_fluid = {4180, 'J/(kg*K)'}; % Water-like coolant
+end
+
+variables
+    T_wall = {298.15, 'K'};
+    mdot = {0.05, 'kg/s'};     % Mass flow rate (from pump)
+end
+
+equations
+    T_wall == wall.T;
+
+    % Heat transfer from wall to fluid
+    % Q = m_dot * cp * (T_out - T_in)
+    % Simplified convection: Q = h * A * (T_wall - T_avg)
+    let
+        h = 1000; % Heat transfer coefficient [W/m^2*K]
+        A = 3.14159 * d_inner * length;
+        T_fluid_avg = (inlet.T + outlet.T) / 2;
+    in
+        wall.Q == h * A * (T_wall - T_fluid_avg);
+        outlet.Q == -inlet.Q + wall.Q;
+
+        % Energy balance
+        mdot * cp_fluid * (outlet.T - inlet.T) == wall.Q;
+    end
+end
+
+end

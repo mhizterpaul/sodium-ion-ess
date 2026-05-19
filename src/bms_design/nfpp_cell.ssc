@@ -1,40 +1,84 @@
 component nfpp_cell
-% NFPP Sodium-Ion Cell (Simscape implementation)
+% NFPP Sodium-Ion Cell (Enhanced Multiphysics Digital Twin)
 % Ref: docs/paper.md
 
 nodes
     p = foundation.electrical.electrical; % +:left
     n = foundation.electrical.electrical; % -:right
-    thermal_port = foundation.thermal.thermal; % thermal:right
+    thermal_casing = foundation.thermal.thermal; % casing:right
 end
 
 parameters
-    Q_nom = {10, 'A*hr'}; % Nominal Capacity
-    R_int = {0.01, 'Ohm'}; % Internal Resistance
-    C_th = {500, 'J/K'}; % Thermal Mass
-    V_nom = {3.2, 'V'}; % Nominal Voltage
+    % Electrical Parameters
+    Q_nom = {10, 'A*hr'};      % Nominal Capacity
+    R_0 = {0.01, 'Ohm'};       % Internal Resistance (R0)
+    V_nom = {3.2, 'V'};        % Nominal Voltage
+
+    % RC Branch 1
+    R1 = {0.005, 'Ohm'};
+    C1 = {2000, 'F'};
+
+    % RC Branch 2
+    R2 = {0.005, 'Ohm'};
+    C2 = {5000, 'F'};
+
+    % Thermal Parameters (Distributed)
+    C_th_core = {400, 'J/K'};   % Core Thermal Capacitance
+    C_th_casing = {100, 'J/K'}; % Casing Thermal Capacitance
+    K_int = {5, 'W/K'};         % Internal Conductance (Core-to-Casing)
+
+    % Electrochemical / Aging
+    E_act = {20000, 'J/mol'};   % Activation Energy
+    R_gas = {8.314, 'J/(mol*K)'};
+    T_ref = {298.15, 'K'};
+    alpha_sei = {1e-10, '1/s'}; % SEI growth coefficient
 end
 
 variables
     v = {0, 'V'};
     i = {0, 'A'};
-    T = {298.15, 'K'};
+    T_core = {298.15, 'K'};
+    T_casing = {298.15, 'K'};
     SOC = {1.0, '1'};
+    V1 = {0, 'V'};
+    V2 = {0, 'V'};
+    c_s = {1.0, '1'};           % Normalized solid concentration
+    c_e = {1.0, '1'};           % Normalized electrolyte concentration
+    SOH = {1.0, '1'};
 end
 
 equations
     v == p.v - n.n;
     i == p.i;
 
-    % Electrical Domain
-    v == V_nom - i * R_int;
+    % Arrhenius Scaling for resistance
+    let
+        R0_eff = R_0 * exp(E_act/R_gas * (1/T_core - 1/T_ref)) / SOH;
+        eta_ct = 0.01 * i;   % Simplified Charge Transfer Overpotential
+        eta_diff = 0.005 * i; % Simplified Diffusion Overpotential
+    in
+        % V = OCV(SOC,T) - eta_ct - eta_diff - IR_0 - V1 - V2
+        v == V_nom - eta_ct - eta_diff - i * R0_eff - V1 - V2;
+    end
 
-    % Thermal Domain
-    thermal_port.T == T;
-    C_th * T.der == i^2 * R_int - thermal_port.Q;
+    % RC Dynamics (Polarization States)
+    V1.der == -V1/(R1*C1) + i/C1;
+    V2.der == -V2/(R2*C2) + i/C2;
+
+    % Thermal Dynamics (Distributed Core-Casing)
+    C_th_core * T_core.der == i^2 * R_0 + i*(V1+V2) - K_int * (T_core - T_casing);
+    C_th_casing * T_casing.der == K_int * (T_core - T_casing) - thermal_casing.Q;
+    thermal_casing.T == T_casing;
 
     % State of Charge
-    SOC.der == -i / Q_nom;
+    SOC.der == -i / (Q_nom * SOH);
+
+    % Concentration States (DFN-informed placeholders)
+    c_s.der == -i / Q_nom;
+    c_e.der == -0.01 * (c_e - 1.0) + 0.001 * i;
+
+    % Aging (SOH)
+    SOH.der == -alpha_sei * abs(i) * exp(0.02 * (T_core - T_ref));
 end
 
 end

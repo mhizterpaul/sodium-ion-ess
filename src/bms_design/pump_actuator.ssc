@@ -1,0 +1,48 @@
+component pump_actuator
+% BLDC Centrifugal Micropump
+% Ref: docs/paper.md section 5
+
+nodes
+    p = foundation.electrical.electrical; % +:left
+    n = foundation.electrical.electrical; % -:right
+end
+
+inputs
+    T_max = {298.15, 'K'};
+    T_safe = {308.15, 'K'};
+    grad_T = {0, 'K'};
+    I_cell = {0, 'A'};
+end
+
+outputs
+    mdot = {0, 'kg/s'};
+end
+
+parameters
+    V_supply = {12, 'V'};
+    k1 = {0.01, 'kg/(s*K)'};
+    k2 = {0.005, 'kg/(s*K)'};
+    k3 = {0.001, 'kg/(s*A)'};
+    rho_fluid = {1000, 'kg/m^3'};
+end
+
+variables
+    i = {0, 'A'};
+    omega = {0, 'rad/s'};
+end
+
+equations
+    % Electrical
+    i == (p.v - n.n) / 10; % Simplified motor resistance
+
+    % Control Law: omega = k1(Tmax - Tsafe) + k2|gradT| + k3*I
+    let
+        T_diff = if T_max > T_safe, T_max - T_safe else {0, 'K'} end;
+        omega_cmd = k1 * T_diff + k2 * abs(grad_T) + k3 * abs(I_cell);
+    in
+        omega == omega_cmd;
+        mdot == 0.1 * omega; % Simplified omega to flow mapping
+    end
+end
+
+end

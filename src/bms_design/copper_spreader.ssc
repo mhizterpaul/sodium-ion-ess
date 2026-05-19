@@ -1,0 +1,30 @@
+component copper_spreader
+% Copper Spreader (Lateral Equalization Plate)
+% Ref: docs/paper.md section 2
+
+nodes
+    thermal_in  = foundation.thermal.thermal; % Surface in:left
+    thermal_out = foundation.thermal.thermal; % Surface out:right
+end
+
+parameters
+    k_cu = {400, 'W/(m*K)'};   % Thermal conductivity (OFHC Copper)
+    rho = {8960, 'kg/m^3'};    % Density
+    cp = {385, 'J/(kg*K)'};    % Specific heat
+    thickness = {0.003, 'm'};  % 3mm thickness
+    area = {0.13 * 0.07, 'm^2'}; % Active area (from memory)
+end
+
+variables
+    T = {298.15, 'K'};
+end
+
+equations
+    T == thermal_in.T;
+    T == thermal_out.T;
+
+    % Lumped 2D plate approximation for a single cell segment
+    (rho * cp * area * thickness) * T.der == thermal_in.Q - thermal_out.Q;
+end
+
+end

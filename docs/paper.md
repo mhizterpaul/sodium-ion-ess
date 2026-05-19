@@ -140,7 +140,7 @@ The Battery Management System (BMS) is designed as a model-based, constraint-dri
 Pack Model 
 Electrical Specification Cell Configuration 16S1P
 Thermal Management Architecture
-Thermal regulation is achieved using a hybrid passive cooling system combining phase-change material (PCM) for transient heat absorption and fin-based heat dissipation for continuous thermal rejection. The system is integrated at the pack level to mitigate transient heat accumulation during high C-rate operation and grid-induced load fluctuations
+The system utilizes a multiphysics electro-thermal-thermo-fluid digital twin for active thermal regulation. This architecture replaces lumped thermal models with a distributed propagation network capturing cell-cell conduction, spreader transport, and tubing convection. Each cell is coupled to an OFHC copper spreader (390–401 W/m·K) for lateral equalization, with heat extraction performed by a serpentine parallel manifold of copper microtubes. Coolant flow is driven by a magnetically coupled BLDC centrifugal micropump (1–5 L/min). Final heat rejection is achieved via an aerosol-enhanced reject-port system utilizing ultrasonic piezoelectric atomizers (80–150 kHz) and a finned air-channel network designed to maximize turbulent heat flow and evaporative-assisted rejection.
 
 SIMULINK BMS CONTROL SYSTEM MODEL
 The ESS is a constrained nonlinear plant:▭(P_cell={SOC,V_1,V_2,T,SOH,R_0^eff})
@@ -149,14 +149,16 @@ Control is applied through current: u=I_cmd
 
 2. CELLS (PHYSICAL PLANT)
 State vector
-x=[█(SOC@V_1@V_2@T@SOH)]
+x=[█(SOC@V_1@V_2@T_{core}@T_{casing}@c_s@c_e@SOH)]
 
 Dynamics: SOC evolution (pure state, not controlled) dSOC/dt=-I/(Q_n^eff )
-Electrical dynamics
-V_t=OCV(SOC)-IR_0^eff-V_1-V_2
+Electrical dynamics (Enhanced ECM + DFN Hybrid)
+V_t=OCV(SOC, T)-IR_0^eff-V_1-V_2-\eta_{ct}-\eta_{diff}
 V ̇_1=-V_1/(R_1 C_1 )+I/C_1 ,V ̇_2=-V_2/(R_2 C_2 )+I/C_2 
-Thermal dynamics C_th T ̇=I^2 R_0^eff-hA(T-T_amb)
-SOH evolution (aging state) (SOH) ̇=-f(I,T,SOC)
+Thermal dynamics (Distributed Network)
+C\dot{T}=KT+Q_{gen}-Q_{fluid}-Q_{conv}
+where Q_{gen} = I^2R + Q_{side reactions}
+SOH evolution (aging state) (SOH) ̇=-f(I,T,SOC) including SEI growth and capacity loss.
 
 3. C-RATE CONTROLLER (PRIMARY CONTROL BLOCK)
  Control objective C=I/Q_n 
@@ -175,10 +177,15 @@ Two implementations:
 (B) Active balancing; DC/DC shuttle between cells, controlled switching network 
 
 5. THERMAL LIMITER (SECONDARY CONTROL)
-a constraint scaler I_cmd^th=I_cmd⋅e^(-λ(T-T_safe )^+ )
-Hard cutoff: T>85^∘ C⇒I=0
+A constraint scaler based on peak cell temperature and gradient:
+I_cmd^th=I_cmd⋅e^(-λ(T_{max}-T_{safe} )^+ - \gamma|\nabla T|)
+Hard cutoff: T_{max}>85^∘ C⇒I=0
 
-6. GRID STRESS DERATING BLOCK
+6. PUMP & ATOMIZER CONTROL
+\omega_{pump}=k_1(T_{max}-T_{safe})+k_2|\nabla T|+k_3I
+Atomizer state: Active if T_{reject} > T_{threshold}
+
+7. GRID STRESS DERATING BLOCK
 Pure supervisory constraint modifier.
 Stress metric D_k=α∣ΔV∣+β∣Δf∣+γB
 Current scaling I_cmd^grid=I_cmd e^(-μD_k )
