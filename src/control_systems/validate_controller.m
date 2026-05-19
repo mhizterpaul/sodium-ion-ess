@@ -59,6 +59,15 @@ function validate_controller()
     results.fault_triggered = strcmp(states.bms_state, 'Fault');
     results.fault_I_cmd = I_cmd;
 
+    %% 5. State-Space MIMO Model Verification
+    fprintf('Verifying State-Space MIMO Model...\n');
+    sys = get_battery_ss_model(params);
+    results.ss_dim_A = size(sys.A);
+    results.ss_dim_B = size(sys.B);
+    results.ss_dim_C = size(sys.C);
+    fprintf('  A dimension: %dx%d (Expected 5x5)\n', results.ss_dim_A(1), results.ss_dim_A(2));
+    fprintf('  B dimension: %dx%d (Expected 5x2)\n', results.ss_dim_B(1), results.ss_dim_B(2));
+
     generate_validation_report(results);
 end
 
@@ -78,6 +87,11 @@ function generate_validation_report(results)
 
     fprintf('\nSafety & Protection:\n');
     fprintf('  Fault Logic: %s\n', ifthen(results.fault_triggered, 'TRIPPED', 'FAILED'));
+
+    fprintf('\nState-Space (MIMO) Model:\n');
+    fprintf('  A Matrix: %dx%d\n', results.ss_dim_A(1), results.ss_dim_A(2));
+    fprintf('  B Matrix: %dx%d\n', results.ss_dim_B(1), results.ss_dim_B(2));
+    fprintf('  C Matrix: %dx%d\n', results.ss_dim_C(1), results.ss_dim_C(2));
     fprintf('====================================\n');
 end
 
