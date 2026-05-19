@@ -80,10 +80,17 @@ class StabilityValidator:
         # 6. Power capability (kW)
         power_kw = (nominal_voltage * peak_current) / 1000.0
 
-        # 7. Cycle life
-        # Based on degradation models or empirical extrapolation from paper.md
-        # Predicted 8000-9000 for optimized NFPP
-        cycle_life = 8500
+        # 7. Cycle life (Estimated based on SEI growth model surrogate)
+        # SOH_dot = -k * exp(-Ea/RT) * I^0.5
+        # We integrate over the 2h discharge simulation
+        temp_k = sol["Volume-averaged cell temperature [K]"].data
+        k_sei = 1e-10
+        # Use trapezoid from scipy or manual trapz equivalent since np.trapz was removed in numpy 2.0
+        from scipy.integrate import trapezoid
+        sei_growth = trapezoid(k_sei * np.exp(-30000 / (8.314 * temp_k)), sol["Time [s]"].data)
+        # Normalize to 20% capacity loss threshold
+        cycle_life = int(0.2 / (sei_growth + 1e-15))
+        cycle_life = min(max(cycle_life, 1000), 10000) # Clamp to realistic range
 
         mass_estimate = 0.07 # 70g for 10Ah cell approx
         energy_density = energy_wh / mass_estimate
