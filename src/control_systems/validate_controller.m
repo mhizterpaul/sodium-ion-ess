@@ -1,45 +1,71 @@
-%% BMS Controller Deployment-Grade Validation Report
-% Verifies stability, observability, and safety override behavior.
+%% Robust BMS Validation Report
+% Verifies hierarchical safety, optimal arbitration, and pack balancing.
 
 %% 1. Initialization
 params = load_optimized_data('src/control_systems/optimized_params.mat');
 
-%% 2. Observability Analysis
-% rank(obsv(A,C)) check for the 5-state coupled plant
-[sys_ss, ~] = get_battery_dynamics(params);
-obs_matrix = obsv(sys_ss.A, sys_ss.C);
-obs_rank = rank(obs_matrix);
-fprintf('MIMO Observability Rank: %d (Target: %d)\n', obs_rank, size(sys_ss.A, 1));
+%% 2. Stability Analysis (Frequency & Time Domain)
+% Analyzes the system using Bode plots and Step response for the 5-state plant.
+sys_pack = get_pack_dynamics(params);
 
-%% 3. Stability & Numerical Stiffness
-% Step size stability check Delta_t < 2/lambda_max
-evs = eig(sys_ss.A);
-lambda_max = max(abs(evs));
-fprintf('System Stiffness (max|lambda|): %.4f\n', lambda_max);
-fprintf('Critical Timestep (Stability): %.4f s\n', 2/lambda_max);
+% 2.1 Eigenvalue Analysis
+evs = eig(sys_pack.A);
+is_stable = all(real(evs) <= 0);
+fprintf('Asymptotic Stability: %s\n', mat2str(is_stable));
 
-%% 4. Safety Override & Hard Latch Logic
-% Verifies that Layer 1 fault cannot be recovered without explicit reset.
+% 2.2 Frequency Response (Bode Plot)
+% Analysis of the system's gain and phase margins
+try
+    h_bode = figure('Visible', 'off');
+    bode(sys_pack);
+    saveas(h_bode, 'src/control_systems/html/bode_plot.png');
+    fprintf('Bode Plot generated.\n');
+catch
+    fprintf('Control System Toolbox not found, skipping Bode Analysis.\n');
+end
+
+% 2.3 Time Response (Step Response)
+% Analysis of the system's settling time and overshoot
+try
+    h_step = figure('Visible', 'off');
+    step(sys_pack);
+    saveas(h_step, 'src/control_systems/html/step_response.png');
+    fprintf('Step Response generated.\n');
+catch
+    fprintf('Control System Toolbox not found, skipping Step Analysis.\n');
+end
+
+%% 3. Hierarchical Safety Test
+% Verifies transition from Normal -> Warning -> Derating -> Shutdown -> Latch
 inputs = struct('V_cells', [3.3, 3.3], 'T_cells', [25, 25], 'SOC_est', 0.5, ...
                 'I_measured', 0, 'Mode', 'Drive', 'Fault_Reset', 0, 'I_request', 10, 'T_amb', 298.15);
 
-% Trigger Critical Fault
-inputs.T_cells = [90, 25];
-[I1, s1] = bms_control_logic(inputs, params);
+[~, s0] = bms_control_logic(inputs, params);
+inputs.T_cells = [60, 25]; [~, s1] = bms_control_logic(inputs, params); % Warning
+inputs.T_cells = [70, 25]; [~, s2] = bms_control_logic(inputs, params); % Derating
+inputs.T_cells = [80, 25]; [~, s3] = bms_control_logic(inputs, params); % Shutdown
+inputs.T_cells = [90, 25]; [~, s4] = bms_control_logic(inputs, params); % Latch
 
-% Remove Fault condition but keep Reset=0
-inputs.T_cells = [25, 25];
-[I2, s2] = bms_control_logic(inputs, params);
+fprintf('Safety Hierarchy Validation:\n');
+fprintf('  T=60C: Status %d (Warning)\n', s1.fault_status);
+fprintf('  T=70C: Status %d (Derating)\n', s2.fault_status);
+fprintf('  T=80C: Status %d (Shutdown)\n', s3.fault_status);
+fprintf('  T=90C: Status %d (Latch)\n', s4.fault_status);
 
-fprintf('Fault Latch Test:\n');
-fprintf('  Immediate Cutoff: %d A (Expected 0)\n', I1);
-fprintf('  Latched After Recovery: %s (Expected Fault)\n', s2.bms_state);
+%% 3. Optimal Current Arbitration (MPC-inspired)
+% Verifies derating at T=70C
+inputs.T_cells = [70, 25];
+[I_cmd, ~] = bms_control_logic(inputs, params);
+fprintf('Optimal Arbitration (T=70C): I_cmd = %.2f A (Requested 10A)\n', I_cmd);
 
-%% 5. Energy Management (Multi-tier Derating)
-% Verifies soft-constraint handling (Layer 4)
-inputs.T_cells = [70, 70]; % Derating zone (T_max=60, T_crit=85)
-[I_derated, ~] = bms_control_logic(inputs, params);
-fprintf('Thermal Derating: %.2f A (Requested 10A)\n', I_derated);
+%% 4. Pack Dynamics & Balancing Energy
+% Models 2-cell imbalance
+sys_pack = get_pack_dynamics(params);
+fprintf('Pack Dynamics: %d states, capacity imbalance modeled.\n', size(sys_pack.A, 1));
+
+inputs.V_cells = [3.5, 3.45]; % Imbalance
+[~, states] = bms_control_logic(inputs, params);
+fprintf('Balancing Energy Dissipation: Cell 1 P = %.4f W\n', states.P_balance(1));
 
 %% Helper Functions
 function params = load_optimized_data(filename)

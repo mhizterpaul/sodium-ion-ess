@@ -1,140 +1,105 @@
-%% AUTOMOTIVE-GRADE MULTI-LAYER BMS ARCHITECTURE
-% Ref: docs/paper.md, ISO 26262/AUTOSAR inspired
+%% ROBUST MULTI-LAYER BMS ARCHITECTURE
+% Ref: ISO 26262 Hierarchical Safety + Optimal Control (MPC-inspired)
 
 function [I_cmd, states] = bms_control_logic(inputs, params)
     % inputs: struct {SOC_est, V_cells, T_cells, I_measured, Mode, Fault_Reset, I_request, T_amb}
 
     persistent bms_state;
     persistent precharge_timer;
-    persistent fault_latch;
+    persistent fault_status; % 0: Normal, 1: Warning, 2: Derating, 3: Shutdown, 4: Latch
     if isempty(bms_state)
         bms_state = 'Standby';
         precharge_timer = 0;
-        fault_latch = 0;
+        fault_status = 0;
     end
 
-    %% LAYER 1: SAFETY / PROTECTION (Hard Override)
-    % Asynchronous-equivalent logic for hard real-time protection
-    is_critical_fault = any(inputs.V_cells > 3.85) || any(inputs.V_cells < 1.9) || any(inputs.T_cells > 85);
-    if is_critical_fault
-        fault_latch = 1;
-    end
-    if inputs.Fault_Reset
-        fault_latch = 0;
-    end
+    %% LAYER 1: SAFETY SYSTEM (Hierarchical & Latched)
+    % Multi-tier Fault Classification
+    T_max_cell = max(inputs.T_cells);
+    V_max_cell = max(inputs.V_cells);
 
-    %% LAYER 2: STATE MACHINE (Mode Logic)
-    if fault_latch
-        bms_state = 'Fault';
+    if T_max_cell > 85 || V_max_cell > 3.9
+        fault_status = 4; % LATCHED LOCKOUT
+    elseif T_max_cell > 75 || V_max_cell > 3.8
+        fault_status = 3; % SHUTDOWN
+    elseif T_max_cell > 65
+        fault_status = 2; % DERATING
+    elseif T_max_cell > 55
+        fault_status = 1; % WARNING
     else
-        switch bms_state
-            case 'Standby'
-                if strcmp(inputs.Mode, 'Drive') || strcmp(inputs.Mode, 'Charge')
-                    bms_state = 'Precharge';
-                    precharge_timer = 0;
-                end
-            case 'Precharge'
-                precharge_timer = precharge_timer + 0.01; % Explicit discrete time step
-                if precharge_timer > 0.05 % 50ms precharge
-                    if strcmp(inputs.Mode, 'Drive'), bms_state = 'Run';
-                    else, bms_state = 'Charge'; end
-                end
-            case 'Run'
-                if strcmp(inputs.Mode, 'Standby'), bms_state = 'Standby'; end
-            case 'Charge'
-                if strcmp(inputs.Mode, 'Standby') || all(inputs.SOC_est > 0.99), bms_state = 'Standby'; end
-            case 'Fault'
-                if ~fault_latch, bms_state = 'Standby'; end
-        end
+        if fault_status < 4, fault_status = 0; end
     end
 
-    %% LAYER 3: ESTIMATION (Coupled Estimators)
-    % Nonlinear OCV-SOC mapping: V_oc = f(SOC, T)
+    if inputs.Fault_Reset && fault_status == 4, fault_status = 0; end
+
+    %% LAYER 2: STATE MACHINE (Deterministic Logic)
+    if fault_status >= 3, bms_state = 'Fault'; end
+
+    switch bms_state
+        case 'Standby'
+            if strcmp(inputs.Mode, 'Drive'), bms_state = 'Precharge'; precharge_timer = 0; end
+        case 'Precharge'
+            precharge_timer = precharge_timer + 0.01;
+            if precharge_timer > 0.05, bms_state = 'Run'; end
+        case 'Run'
+            if strcmp(inputs.Mode, 'Standby'), bms_state = 'Standby'; end
+        case 'Fault'
+            if fault_status < 3, bms_state = 'Standby'; end
+    end
+
+    %% LAYER 3: ESTIMATION (Nonlinear OCV-SOC mapping)
+    % 5th-order Polynomial OCV for NFPP
     SOC = inputs.SOC_est;
-    V_oc = 3.1 + 0.4 * (SOC - 0.5) - 0.001 * (inputs.T_amb - 298.15);
+    V_oc = 2.0 + 3.5*SOC - 5.1*SOC^2 + 4.8*SOC^3 - 2.1*SOC^4 + 0.5*SOC^5;
 
-    %% LAYER 4: ENERGY MANAGEMENT (MPC-inspired current scaling)
-    % Objective: Maximize I_request subject to Thermal and Voltage constraints
+    %% LAYER 4: OPTIMAL ENERGY MANAGEMENT (MPC-inspired Arbitration)
+    % Minimize J = (I - I_ref)^2 + lambda*T_penalty
     Q_n = params.Nominal_cell_capacity_Ah;
-
-    % Multi-tier derating (Soft constraint handling)
-    T_max = 60; T_crit = 85;
-    thermal_derating = max(0, min(1, (T_crit - max(inputs.T_cells)) / (T_crit - T_max)));
-
-    V_min = 2.5; V_max = 3.6;
-    volt_derating = max(0, min(1, (max(inputs.V_cells) - V_min) / (V_max - V_min)));
-
+    I_ref = inputs.I_request;
     if strcmp(bms_state, 'Run')
-        I_raw = inputs.I_request;
-    elseif strcmp(bms_state, 'Charge')
-        I_raw = Q_n * 0.5;
-    elseif strcmp(bms_state, 'Precharge')
-        I_raw = 0.1 * Q_n;
+        % Soft Constraint Handling (QP-like Arbitration)
+        lambda_T = 0.5;
+        T_margin = max(0, T_max_cell - 60);
+        I_opt = I_ref * exp(-lambda_T * T_margin / 25);
+
+        % Hierarchical Derating override
+        if fault_status == 2, I_opt = min(I_opt, 0.5 * Q_n); end
+        I_cmd = I_opt;
     else
-        I_raw = 0;
+        I_cmd = 0;
     end
 
-    % Optimal actuation command
-    I_cmd = I_raw * thermal_derating * volt_derating;
-
-    % LAYER 1 OVERRIDE (Final Latch)
-    if strcmp(bms_state, 'Fault'), I_cmd = 0; end
-
-    %% LAYER 5: ACTUATION MAPPING
+    %% LAYER 5: ACTUATION & BALANCING (Energy-based)
     states.bms_state = bms_state;
-    states.balancing_active = (inputs.V_cells - mean(inputs.V_cells)) > 0.01;
-    states.I_limit = Q_n * thermal_derating;
-    states.contactor_main = strcmp(bms_state, 'Run') || strcmp(bms_state, 'Charge');
+    states.fault_status = fault_status;
+
+    % Energy-based Balancing: P = (V - Vavg)^2 / R_bleed
+    R_bleed = 10; % Ohms
+    V_avg = mean(inputs.V_cells);
+    states.balancing_active = (inputs.V_cells - V_avg) > 0.01;
+    states.P_balance = (states.balancing_active .* (inputs.V_cells - V_avg).^2) ./ R_bleed;
+
+    states.contactor_main = strcmp(bms_state, 'Run');
     states.contactor_pre = strcmp(bms_state, 'Precharge');
     states.V_oc = V_oc;
 end
 
-%% MIMO STATE-SPACE MODEL (Coupled Electro-Thermal)
-function [sys_ss, sys_tf] = get_battery_dynamics(params)
-    % x = [SOC, V1, V2, T, SOH]'
-    R0 = 0.01; R1 = 0.005; C1 = 500; Cth = 500; hA = 0.1;
-    Q = params.Nominal_cell_capacity_Ah * 3600;
+%% PACK DYNAMICS (2-Cell Imbalance Model)
+function [sys_ss] = get_pack_dynamics(params)
+    % x = [SOC1, SOC2, V1, V2, T1, T2]'
+    % Models voltage dispersion and thermal gradients
+    R0 = 0.01; Q = params.Nominal_cell_capacity_Ah * 3600;
+    Cth = 500; hA = 0.1;
 
-    % Electro-Thermal Coupling Matrix
-    A = zeros(5,5);
-    A(2,2) = -1/(R1*C1);
-    A(4,4) = -hA/Cth;
-    A(4,2) = R1/Cth; % Temperature feedback from RC branch
+    A = zeros(6,6);
+    A(5,5) = -hA/Cth; A(6,6) = -hA/Cth;
 
-    B = zeros(5,2); % u = [I, T_amb]
-    B(1,1) = -1/Q; B(2,1) = 1/C1; B(4,2) = hA/Cth;
+    B = zeros(6,1); % u = I
+    B(1,1) = -1/Q; B(2,1) = -1.02/Q; % 2% capacity imbalance
 
-    C = zeros(2,5); % y = [V_terminal, T]
-    C(1,1) = 0.8; % Nonlinear OCV gradient dV/dSOC
-    C(1,2) = -1; C(2,4) = 1;
+    C = zeros(2,6); % y = [V1, V2]
+    C(1,1) = 0.8; C(2,2) = 0.8;
 
-    D = [-R0, 0; 0, 0];
+    D = [-R0; -R0];
     sys_ss = ss(A, B, C, D);
-    sys_tf = tf(sys_ss);
-end
-
-%% EKF SOC ESTIMATOR (Observability-Rigorous)
-function [soc_new, P_new] = ekf_estimator(v_meas, i_meas, soc_old, P_old, params)
-    % Q: Process noise (uncertainty in current/integration)
-    % R: Measurement noise (sensor accuracy)
-    Q_noise = 1e-6; R_noise = 0.01;
-    dt = 1;
-    Q_cap = params.Nominal_cell_capacity_Ah * 3600;
-
-    % Predict
-    soc_pred = soc_old - i_meas * dt / Q_cap;
-    P_pred = P_old + Q_noise;
-
-    % Nonlinear Jacobian H = dV/dSOC
-    H = 0.8;
-
-    % Observability check (Rank of H)
-    if abs(H) < 1e-3, K = 0; else
-        K = P_pred * H / (H * P_pred * H + R_noise);
-    end
-
-    % Update
-    v_pred = 3.1 + H * (soc_pred - 0.5) - i_meas * 0.01;
-    soc_new = max(0, min(1, soc_pred + K * (v_meas - v_pred))); % Constraint handling
-    P_new = (1 - K * H) * P_pred;
 end
