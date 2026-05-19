@@ -14,28 +14,26 @@ parameters
     t_wall = {0.001, 'm'};     % 1mm wall
     length = {0.5, 'm'};       % Tube length per cell
     cp_fluid = {4180, 'J/(kg*K)'}; % Water-like coolant
+    h_coeff = {1000, 'W/(m^2*K)'}; % Convection coefficient
 end
 
 variables
     T_wall = {298.15, 'K'};
-    mdot = {0.05, 'kg/s'};     % Mass flow rate (from pump)
+    mdot = {0.05, 'kg/s'};     % Mass flow rate
 end
 
 equations
     T_wall == wall.T;
 
     % Heat transfer from wall to fluid
-    % Q = m_dot * cp * (T_out - T_in)
-    % Simplified convection: Q = h * A * (T_wall - T_avg)
     let
-        h = 1000; % Heat transfer coefficient [W/m^2*K]
-        A = 3.14159 * d_inner * length;
-        T_fluid_avg = (inlet.T + outlet.T) / 2;
+        A = {3.14159, '1'} * d_inner * length;
+        T_fluid_avg = (inlet.T + outlet.T) / {2, '1'};
     in
-        wall.Q == h * A * (T_wall - T_fluid_avg);
+        wall.Q == h_coeff * A * (T_wall - T_fluid_avg);
         outlet.Q == -inlet.Q + wall.Q;
 
-        % Energy balance
+        % Energy balance: Q = mdot * cp * deltaT
         mdot * cp_fluid * (outlet.T - inlet.T) == wall.Q;
     end
 end

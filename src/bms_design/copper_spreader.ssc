@@ -12,7 +12,7 @@ parameters
     rho = {8960, 'kg/m^3'};    % Density
     cp = {385, 'J/(kg*K)'};    % Specific heat
     thickness = {0.003, 'm'};  % 3mm thickness
-    area = {0.13 * 0.07, 'm^2'}; % Active area (from memory)
+    area = {0.13 * 0.07, 'm^2'}; % Active area
 end
 
 variables

@@ -31,7 +31,11 @@ parameters
     E_act = {20000, 'J/mol'};   % Activation Energy
     R_gas = {8.314, 'J/(mol*K)'};
     T_ref = {298.15, 'K'};
-    alpha_sei = {1e-10, '1/s'}; % SEI growth coefficient
+    alpha_sei = {1e-11, '1/(A*s)'}; % SEI growth coefficient (unit corrected)
+
+    % Overpotential Coeffs
+    R_ct = {0.01, 'Ohm'};
+    R_diff = {0.005, 'Ohm'};
 end
 
 variables
@@ -48,14 +52,15 @@ variables
 end
 
 equations
-    v == p.v - n.n;
+    v == p.v - n.v;
     i == p.i;
+    p.i + n.i == {0, 'A'}; % Conservation of charge
 
     % Arrhenius Scaling for resistance
     let
         R0_eff = R_0 * exp(E_act/R_gas * (1/T_core - 1/T_ref)) / SOH;
-        eta_ct = 0.01 * i;   % Simplified Charge Transfer Overpotential
-        eta_diff = 0.005 * i; % Simplified Diffusion Overpotential
+        eta_ct = R_ct * i;   % Charge Transfer Overpotential
+        eta_diff = R_diff * i; % Diffusion Overpotential
     in
         % V = OCV(SOC,T) - eta_ct - eta_diff - IR_0 - V1 - V2
         v == V_nom - eta_ct - eta_diff - i * R0_eff - V1 - V2;
@@ -70,15 +75,15 @@ equations
     C_th_casing * T_casing.der == K_int * (T_core - T_casing) - thermal_casing.Q;
     thermal_casing.T == T_casing;
 
-    % State of Charge
+    % State of Charge (SOH-aware)
     SOC.der == -i / (Q_nom * SOH);
 
     % Concentration States (DFN-informed placeholders)
     c_s.der == -i / Q_nom;
-    c_e.der == -0.01 * (c_e - 1.0) + 0.001 * i;
+    c_e.der == {-0.01, '1/s'} * (c_e - {1.0, '1'}) + {0.001, '1/A'} * i / {1, 's'};
 
     % Aging (SOH)
-    SOH.der == -alpha_sei * abs(i) * exp(0.02 * (T_core - T_ref));
+    SOH.der == -alpha_sei * abs(i) * exp({0.02, '1/K'} * (T_core - T_ref));
 end
 
 end

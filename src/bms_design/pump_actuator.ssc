@@ -20,10 +20,12 @@ end
 
 parameters
     V_supply = {12, 'V'};
-    k1 = {0.01, 'kg/(s*K)'};
-    k2 = {0.005, 'kg/(s*K)'};
-    k3 = {0.001, 'kg/(s*A)'};
+    k1 = {0.01, 'rad/(s*K)'};
+    k2 = {0.005, 'rad/(s*K)'};
+    k3 = {0.001, 'rad/(s*A)'};
     rho_fluid = {1000, 'kg/m^3'};
+    R_motor = {10, 'Ohm'};
+    k_flow = {0.1, '(kg/s)/(rad/s)'};
 end
 
 variables
@@ -33,7 +35,8 @@ end
 
 equations
     % Electrical
-    i == (p.v - n.n) / 10; % Simplified motor resistance
+    i == (p.v - n.v) / R_motor;
+    p.i + n.i == {0, 'A'};
 
     % Control Law: omega = k1(Tmax - Tsafe) + k2|gradT| + k3*I
     let
@@ -41,7 +44,7 @@ equations
         omega_cmd = k1 * T_diff + k2 * abs(grad_T) + k3 * abs(I_cell);
     in
         omega == omega_cmd;
-        mdot == 0.1 * omega; % Simplified omega to flow mapping
+        mdot == k_flow * omega;
     end
 end
 
