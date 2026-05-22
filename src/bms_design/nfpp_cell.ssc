@@ -1,6 +1,7 @@
 component nfpp_cell
 % NFPP Sodium-Ion Cell (Enhanced Multiphysics Digital Twin)
 % Ref: docs/paper.md
+% Updates: Poly-only casing (no aluminum laminate)
 
 nodes
     p = foundation.electrical.electrical; % +:left
@@ -10,79 +11,64 @@ end
 
 parameters
     % Electrical Parameters
-    Q_nom = {10, 'A*hr'};      % Nominal Capacity
-    R_0 = {0.01, 'Ohm'};       % Internal Resistance (R0)
-    V_nom = {3.2, 'V'};        % Nominal Voltage
+    Q_nom = {10, 'A*hr'};
+    R_0 = {0.01, 'Ohm'};
+    V_nom = {3.2, 'V'};
 
-    % RC Branch 1
-    R1 = {0.005, 'Ohm'};
-    C1 = {2000, 'F'};
-
-    % RC Branch 2
-    R2 = {0.005, 'Ohm'};
-    C2 = {5000, 'F'};
+    % RC Branches
+    R1 = {0.005, 'Ohm'}; C1 = {2000, 'F'};
+    R2 = {0.005, 'Ohm'}; C2 = {5000, 'F'};
 
     % Thermal Parameters (Distributed)
-    C_th_core = {400, 'J/K'};   % Core Thermal Capacitance
-    C_th_casing = {100, 'J/K'}; % Casing Thermal Capacitance
-    K_int = {5, 'W/K'};         % Internal Conductance (Core-to-Casing)
+    C_th_core = {400, 'J/K'};
+    C_th_casing = {150, 'J/K'}; % Increased for Poly material
+    K_int = {1.5, 'W/K'};       % Reduced for Poly material (lower conductivity than Al)
 
     % Electrochemical / Aging
-    E_act = {20000, 'J/mol'};   % Activation Energy
+    E_act = {20000, 'J/mol'};
     R_gas = {8.314, 'J/(mol*K)'};
     T_ref = {298.15, 'K'};
-    alpha_sei = {1e-11, '1/(A*s)'}; % SEI growth coefficient
-
-    % Overpotential Coeffs
+    alpha_sei = {1e-11, '1/(A*s)'};
     R_ct = {0.01, 'Ohm'};
     R_diff = {0.005, 'Ohm'};
 end
 
 variables
     v = {0, 'V'};
-    i_dis = {0, 'A'};           % Discharge current (out of p)
+    i_dis = {0, 'A'};
     T_core = {298.15, 'K'};
     T_casing = {298.15, 'K'};
     SOC = {1.0, '1'};
     V1 = {0, 'V'};
     V2 = {0, 'V'};
-    c_s = {1.0, '1'};           % Normalized solid concentration
-    c_e = {1.0, '1'};           % Normalized electrolyte concentration
+    c_s = {1.0, '1'};
+    c_e = {1.0, '1'};
     SOH = {1.0, '1'};
 end
 
 equations
     v == p.v - n.v;
-    i_dis == -p.i;              % Current flowing out of positive terminal
+    i_dis == -p.i;
     p.i + n.i == {0, 'A'};
 
-    % Arrhenius Scaling for resistance
     let
         R0_eff = R_0 * exp(E_act/R_gas * (1/T_core - 1/T_ref)) / SOH;
         eta_ct = R_ct * i_dis;
         eta_diff = R_diff * i_dis;
     in
-        % V = OCV(SOC,T) - eta_ct - eta_diff - IR_0 - V1 - V2
         v == V_nom - eta_ct - eta_diff - i_dis * R0_eff - V1 - V2;
     end
 
-    % RC Dynamics (Polarization States)
     V1.der == -V1/(R1*C1) + i_dis/C1;
     V2.der == -V2/(R2*C2) + i_dis/C2;
 
-    % Thermal Dynamics (Distributed Core-Casing)
     C_th_core * T_core.der == i_dis^2 * R_0 + i_dis*(V1+V2) - K_int * (T_core - T_casing);
     C_th_casing * T_casing.der == K_int * (T_core - T_casing) - thermal_casing.Q;
     thermal_casing.T == T_casing;
 
-    % State of Charge
     SOC.der == -i_dis / (Q_nom * SOH);
-
-    % Concentration States
     c_s.der == -i_dis / Q_nom;
     c_e.der == {-0.01, '1/s'} * (c_e - {1.0, '1'}) + {0.001, '1/A'} * i_dis / {1, 's'};
-
-    % Aging (SOH)
     SOH.der == -alpha_sei * abs(i_dis) * exp({0.02, '1/K'} * (T_core - T_ref));
 end
 

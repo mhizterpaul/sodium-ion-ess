@@ -42,7 +42,7 @@ Layer stack:
 	Cathode current collector: aluminum foil (~15 micrometers) 
 	Anode current collector: copper foil (~10 micrometers) 
 	Separator: polyolefin trilayer membrane (~20 micrometers) 
-	External casing: aluminum laminated moisture barrier (~30–50 micrometers) 
+	External casing: poly-based moisture barrier (no aluminum laminate)
 	Inner sealant: polypropylene-based sealing layer 
 
 Base Model Validation Framework 
@@ -129,7 +129,16 @@ The Battery Management System (BMS) is designed as a model-based, constraint-dri
 Pack Model 
 Electrical Specification Cell Configuration 16S1P
 Thermal Management Architecture
-The system utilizes a multiphysics electro-thermal-thermo-fluid digital twin for active thermal regulation. This architecture replaces lumped thermal models with a distributed propagation network capturing cell-cell conduction, spreader transport, and tubing convection. Each cell is coupled to an OFHC copper spreader (390–401 W/m·K) for lateral equalization, with heat extraction performed by a serpentine parallel manifold of copper microtubes. Coolant flow is driven by a magnetically coupled BLDC centrifugal micropump (1–5 L/min). Final heat rejection is achieved via an aerosol-enhanced reject-port system utilizing ultrasonic piezoelectric atomizers (80–150 kHz) and a finned air-channel network designed to maximize turbulent heat flow and evaporative-assisted rejection.
+The system utilizes a multiphysics electro-thermal-thermo-fluid digital twin for active thermal regulation. This architecture replaces lumped thermal models with a distributed propagation network capturing cell-cell conduction, spreader transport, and tubing convection. Each cell is coupled to an OFHC copper spreader (390–401 W/m·K) for lateral equalization.
+
+Heat extraction is performed by a dual-tube network of Aluminum Alloy 3003 microtubes tracing a sinusoidal path. The working fluid is a 60% deionized water and 40% ethylene glycol mixture. Approximately 45% of the battery surface is in contact with the tubing.
+
+The system features a 3-airway topology:
+*   **Inlet Airways:** Two airways located at the 30% length position of the unit, composed of small oblong rectangles.
+*   **Exit Airway:** Located at the back of the unit.
+*   **Coverage:** Airways cover approximately 45% of the unit height.
+
+Coolant flow is driven by a magnetically coupled BLDC centrifugal micropump (1–5 L/min). Final heat rejection is achieved via an aerosol-enhanced system utilizing two ultrasonic piezoelectric atomizers (80–150 kHz) on each side. This configuration creates a draft of air that enters at the 1/3 position inlets and exits through the back, with sufficient spacing maintained between in-draft and exit airways to optimize heat exchange.
 
 SIMULINK BMS CONTROL SYSTEM MODEL
 The ESS is a constrained nonlinear plant:▭(P_cell={SOC,V_1,V_2,T,SOH,R_0^eff})

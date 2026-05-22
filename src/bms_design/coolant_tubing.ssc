@@ -1,6 +1,7 @@
 component coolant_tubing
-% Coolant Tubing Network (Copper microtube)
-% Ref: docs/paper.md section 4
+% Dual-Tube Network (Aluminum Alloy 3003)
+% Ref: docs/paper.md
+% Updates: 45% surface contact, Al 3003, 60/40 Water-Glycol
 
 nodes
     wall = foundation.thermal.thermal; % Tube wall:top
@@ -9,31 +10,32 @@ nodes
 end
 
 parameters
-    k_tube = {390, 'W/(m*K)'};
-    d_inner = {0.006, 'm'};    % 6mm ID
-    t_wall = {0.001, 'm'};     % 1mm wall
-    length = {0.5, 'm'};       % Tube length per cell
-    cp_fluid = {4180, 'J/(kg*K)'}; % Water-like coolant
-    h_coeff = {1000, 'W/(m^2*K)'}; % Convection coefficient
+    k_tube = {163, 'W/(m*K)'};   % Al 3003
+    d_inner = {0.006, 'm'};
+    t_wall = {0.001, 'm'};
+    length = {0.8, 'm'};         % Increased for sinusoidal path
+    cp_fluid = {3400, 'J/(kg*K)'}; % 60/40 Water-Glycol
+    h_coeff = {1200, 'W/(m^2*K)'};
+    coverage_factor = {0.45, '1'}; % 45% surface contact
 end
 
 variables
     T_wall = {298.15, 'K'};
-    mdot = {0.05, 'kg/s'};     % Mass flow rate
+    mdot = {0.05, 'kg/s'};
 end
 
 equations
     T_wall == wall.T;
 
-    % Heat transfer from wall to fluid
     let
-        A = {3.14159, '1'} * d_inner * length;
+        % Effective contact area based on 45% coverage
+        A_contact = {3.14159, '1'} * d_inner * length * coverage_factor;
         T_fluid_avg = (inlet.T + outlet.T) / {2, '1'};
     in
-        wall.Q == h_coeff * A * (T_wall - T_fluid_avg);
+        wall.Q == h_coeff * A_contact * (T_wall - T_fluid_avg);
         outlet.Q == -inlet.Q + wall.Q;
 
-        % Energy balance: Q = mdot * cp * deltaT
+        % Energy balance
         mdot * cp_fluid * (outlet.T - inlet.T) == wall.Q;
     end
 end

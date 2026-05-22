@@ -1,5 +1,5 @@
 component reject_port_atomizer
-% Atomized Reject-Port Cooling System
+% Dual Atomizer Reject-Port System (3-Airway Topology)
 % Ref: docs/paper.md section 6 & 7
 
 nodes
@@ -8,11 +8,12 @@ nodes
 end
 
 parameters
-    A_fins = {0.5, 'm^2'};      % Total fin area
-    Lv = {2260e3, 'J/kg'};      % Latent heat of vaporization
-    h_conv = {50, 'W/(m^2*K)'}; % Air convection coefficient
-    T_threshold = {313.15, 'K'};% 40C activation
-    m_evap_rate = {0.001, 'kg/s'};
+    A_fins = {0.5, 'm^2'};
+    Lv = {2260e3, 'J/kg'};
+    h_conv = {65, 'W/(m^2*K)'};  % Increased for draft logic
+    T_threshold = {313.15, 'K'};
+    m_evap_rate_base = {0.001, 'kg/s'};
+    num_atomizers = {2, '1'};    % Two atomizers per side
 end
 
 variables
@@ -22,11 +23,11 @@ end
 equations
     T_s == thermal_in.T;
 
-    % Heat Rejection: Q = hA(Ts - Tamb) + mdot_evap * Lv
     let
+        % Q = hA(Ts - Tamb) + (num_atomizers * mdot_evap * Lv)
         Q_conv = h_conv * A_fins * (T_s - ambient.T);
         atomizer_active = if T_s > T_threshold, {1, '1'} else {0, '1'} end;
-        Q_evap = atomizer_active * m_evap_rate * Lv;
+        Q_evap = atomizer_active * num_atomizers * m_evap_rate_base * Lv;
     in
         thermal_in.Q == Q_conv + Q_evap;
         ambient.Q == -thermal_in.Q;
