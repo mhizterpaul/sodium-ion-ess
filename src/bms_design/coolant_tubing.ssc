@@ -17,7 +17,8 @@ parameters
     cp_fluid = {3400, 'J/(kg*K)'}; % 60/40 Water-Glycol
     h_coeff = {1200, 'W/(m^2*K)'};
     coverage_factor = {0.45, '1'}; % 45% surface contact
-    tube_spacing = {0.01, 'm'};     % 10mm spacing (within 6-15mm range)
+    spacing_inlet = {0.007, 'm'};   % 7mm pitch at indraft inlets
+    spacing_external = {0.012, 'm'}; % 12mm pitch at external battery layer
 end
 
 variables

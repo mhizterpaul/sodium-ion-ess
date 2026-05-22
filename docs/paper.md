@@ -137,7 +137,7 @@ The plant model represents the physical hardware of the 16S1P sodium-ion battery
 
 1.2 Thermal & Fluid Network
 *   **Copper Spreader:** OFHC copper structural bridge touching the battery pack and chassis walls, featuring high-density fins (18–32 fins/in).
-*   **Coolant Loop:** Dual-tube sinusoidal Aluminum Alloy 3003 microtube network (~45% surface contact) carrying 60/40 Water-Glycol. Tubing is routed with a specified spacing of 6–15 mm.
+*   **Coolant Loop:** Dual-tube sinusoidal Aluminum Alloy 3003 microtube network (~45% surface contact) carrying 60/40 Water-Glycol. Tubing is routed with differentiated spacing: a narrower pitch at the indraft inlets (6–9 mm) to maximize heat exchange at the entry points, and a wider pitch (10–15 mm) in contact with the external battery layer.
 *   **Pump:** Magnetically coupled BLDC centrifugal micropump (1–5 L/min).
 *   **Airway Topology:** 3-airway draft system (two inlets at 30% length, one exit at back) covering 45% of unit height with oblong rectangular orifices.
 *   **Rejection Port:** Four ultrasonic piezoelectric atomizers (80–150 kHz) for aerosol-enhanced evaporative cooling.
