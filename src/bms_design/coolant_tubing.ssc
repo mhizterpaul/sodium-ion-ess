@@ -18,7 +18,7 @@ parameters
     h_coeff = {1200, 'W/(m^2*K)'};
     coverage_factor = {0.45, '1'}; % 45% surface contact
     spacing_inlet = {0.007, 'm'};   % 7mm pitch at indraft inlets
-    spacing_external = {0.012, 'm'}; % 12mm pitch at external battery layer
+    spacing_cell_coating = {0.012, 'm'}; % 12mm pitch in contact with cell coating
 end
 
 variables

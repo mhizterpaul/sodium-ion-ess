@@ -136,17 +136,28 @@ The plant model represents the physical hardware of the 16S1P sodium-ion battery
 *   **Internal Dynamics:** Core-casing distributed thermal nodes with DFN-informed concentration states ($c_s, c_e$) and 2-RC polarization branches.
 
 1.2 Thermal & Fluid Network
-*   **Copper Spreader:** OFHC copper structural bridge touching the battery pack and chassis walls, featuring high-density fins (18–32 fins/in).
-*   **Coolant Loop:** Dual-tube sinusoidal Aluminum Alloy 3003 microtube network (~45% surface contact) carrying 60/40 Water-Glycol. Tubing is routed with differentiated spacing: a narrower pitch at the indraft inlets (6–9 mm) to maximize heat exchange at the entry points, and a wider pitch (10–15 mm) in contact with the external battery layer.
-*   **Pump:** Magnetically coupled BLDC centrifugal micropump (1–5 L/min).
-*   **Airway Topology:** 3-airway draft system (two inlets at 30% length, one exit at back) covering 45% of unit height with oblong rectangular orifices.
-*   **Rejection Port:** Four ultrasonic piezoelectric atomizers (80–150 kHz) for aerosol-enhanced evaporative cooling.
+The plant utilizes a distributed thermal propagation network governed by the state-space relation:
+$C\dot{T} = KT + Q_{gen} - Q_{fluid} - Q_{conv}$
+
+| Component | Physical Specification |
+| :--- | :--- |
+| **Copper Spreader** | OFHC copper bridge (390–401 W/m·K) touching battery pack and chassis walls. Integrated fin array (18–32 fins/in). |
+| **Coolant Loop** | Dual-tube sinusoidal Aluminum Alloy 3003 microtubes (~45% surface contact) carrying 60/40 Water-Glycol. |
+| **Tubing Spacing** | Differentiated: 6–9 mm at indraft inlets, 10–15 mm at cell coating contact. |
+| **Pump Actuator** | Magnetically coupled BLDC centrifugal micropump (1–5 L/min, 3–15 W). |
+| **Draft Topology** | 3-airway system (two inlets at 30% length, one exit at back) covering 45% height with oblong rectangular orifices. |
+| **Rejection Port** | Four ultrasonic piezoelectric atomizers (80–150 kHz) for aerosol-enhanced evaporative cooling ($Q = hA\Delta T + \dot{m}L_v$). |
+
+**Thermal Node Topology:**
+*   Cell Core (heat source) → Cell Casing (poly) → Copper Spreader (lateral bridge) → Tubing Wall (Al 3003) → Working Fluid (transport).
 
 1.3 Power Electronics & Conditioning
+The interface layer regulates bidirectional energy flow and grid stability.
+*   **Topology:** AC Grid → STS → PQC → Active Rectifier → DC Link → Bidirectional DC/DC.
 *   **Grid Interface:** Static Transfer Switch (STS) for <4ms grid/island transition.
-*   **PQC:** Series-injected DVR-equivalent sag compensator.
-*   **Conversion:** Bidirectional isolated buck-boost DC/DC stage with integrated PWM and LC filtering.
-*   **DC Link:** Stabilized link with 2200$\mu$F capacitance and bleed resistance.
+*   **PQC:** Series-injected DVR-equivalent sag compensator for voltage sag/swell mitigation.
+*   **Conversion:** Bidirectional isolated buck-boost stage with integrated PWM and LC filtering.
+*   **Monitoring:** SRF-PLL for real-time Frequency and ROCOF estimation.
 
 1.4 Interconnects, Sensors & Faults
 *   **Busbars:** Nickel-plated copper with $I^2R$ Joule heating modeling.
