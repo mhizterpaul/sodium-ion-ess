@@ -172,7 +172,7 @@ State vector: $x = [SOC, V_1, V_2, T_{core}, T_{casing}, c_s, c_e, SOH]^T$
 *   **C-Rate Controller:** $I_{cmd} = sat(I_{ref}, I_{min}, I_{max})$
 *   **Cell Equalizer:** Minimized SOC dispersion via passive bleed or active shuttle.
 *   **Thermal Limiter:** $I_{cmd}^{th} = I_{cmd} \cdot e^{-\lambda(T_{max}-T_{safe})^+ - \gamma|\nabla T|}$
-*   **Pump & Atomizer Control:** $\omega_{pump} = k_1(T_{max}-T_{safe}) + k_2|\nabla T| + k_3I$; Atomizers active if $T > T_{threshold}$.
+*   **Pump Control:** $\omega_{pump} = k_1(T_{max}-T_{safe}) + k_2|\nabla T| + k_3I$.
 *   **Power Quality Control:** DVR-equivalent sag compensation and frequency stabilization via SRF-PLL feedback.
 *   **Grid Stress Derating:** $I_{cmd}^{grid} = I_{cmd} \cdot e^{-\mu D_k}$ where $D_k = \alpha|\Delta V| + \beta|\Delta f| + \gamma B$
 
