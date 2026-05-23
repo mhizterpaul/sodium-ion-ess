@@ -160,48 +160,32 @@ The integrated ESS unit, housing the 16S1P pack and the power conversion system,
 *   **Length:** 180 mm (aligned with 130 mm cell length plus manifold clearances).
 *   **Width:** 140 mm (aligned with 70 mm cell width plus finned chassis thickness).
 
-2. BMS CONTROL ARCHITECTURE & ALGORITHMS
-The BMS is designed as a model-based, constraint-driven control system for sodium-ion ESS operation under unstable grid conditions. The architecture follows a robust 5-layer hierarchy:
+2. BMS CONTROL ARCHITECTURE (Core Research Contribution)
+The BMS is designed as a high-fidelity algorithmic layer that manages the cell plant through state estimation, protection, and safety-enforced control.
 
-**Layer 1: Safety & Fault Diagnostics**
-*   Hierarchical multi-tier fault classification (Warning, Derating, Shutdown, Latched Lockout).
-*   Safety limits: $T_{max} < 85^{\circ}C$, $V_{cell} < 3.9V$.
-*   Diagnostic logic for contactor weld and sensor drift detection.
+**2.1 State Estimation Layer**
+The BMS implements real-time estimation of non-measurable internal states:
+*   **SOC Estimation (EKF):** An Extended Kalman Filter utilizes a nonlinear OCV-SOC mapping and a 2-RC equivalent circuit model to track charge levels across the 16-cell string.
+*   **SOH Inference (RLS):** Recursive Least Squares (RLS) algorithms identify internal resistance growth ($R_0$ drift) to estimate capacity fade and power degradation.
+*   **Temperature Inference:** Distributed sensing combined with a lumped thermal observer provides core temperature estimates where direct sensing is unavailable.
 
-**Layer 2: Deterministic State Machine**
-*   Supervisory control managing transitions: Standby $\rightarrow$ Precharge $\rightarrow$ Run $\rightarrow$ Fault.
-*   Handles fast switching (<4ms) via the Static Transfer Switch (STS).
+**2.2 Protection & Diagnostic Layer**
+Core safety logic monitors and mitigates hazardous conditions:
+*   **Voltage Protection:** Hard-coded thresholds for over-voltage (OV) and under-voltage (UV) to prevent lithium/sodium plating and electrolyte decomposition.
+*   **Thermal Protection:** Over-temperature (OT) shutdown logic triggered if any cell core exceeds the $T_{max}$ envelope.
+*   **Impedance Diagnostics:** Detection of abnormal impedance rise or sudden voltage drops indicating internal shorts or catastrophic degradation.
 
-**Layer 3: State Estimation & Monitoring**
-*   5th-order Polynomial OCV-SOC mapping for NFPP:
-    $V_{oc} = 2.0 + 3.5(SOC) - 5.1(SOC)^2 + 4.8(SOC)^3 - 2.1(SOC)^4 + 0.5(SOC)^5$
-*   High-fidelity SRF-PLL for grid Frequency and ROCOF monitoring.
+**2.3 Safety Enforcement & Current Arbitration**
+The BMS regulates the current command ($I_{cmd}$) to maintain the pack within the Safe Operating Area (SOA):
+*   **Thermal Derating:** Exponential current limiting as cell temperatures approach the safe limit ($T_{limit}$).
+*   **SOC Boundary Derating:** Smooth current tapering at high/low SOC to prevent accidental threshold violations.
+*   **Internal Arbitration:** The final current command is a function of the user request and the most restrictive safety constraint: $I_{cmd} = f(I_{req}, SOC, T, SOH)$.
 
-**Layer 4: Optimal Energy Management & Control**
-*   **C-Rate Control:** Power tracking while respecting SOX (SOC/SOH/SOP) constraints.
-*   **Thermal Derating:** MPC-inspired arbitration to minimize thermal stress: $I_{cmd} = sat(I_{ref}, I_{min}, I_{max})$.
-*   **Grid Stability Control:** DVR-equivalent voltage sag compensation and frequency response support.
+**2.4 Control & Balancing Layer**
+*   **State Machine:** Deterministic management of Standby, Precharge, Run, and Fault states.
+*   **Cell Equalization:** SOC-based passive balancing using bleed resistors to minimize cell-to-cell dispersion during idle periods or low-current operation.
 
-**Layer 5: Balancing & Actuation**
-*   **Cell Equalization:** SOC-based passive balancing using energy-dissipation logic: $P_{balance} = \frac{(V_{cell} - V_{avg})^2}{R_{bleed}}$.
-*   Coordinated control of main and pre-charge contactors.
-
-2.1 Plant State Representation
-State vector: $x = [SOC, V_1, V_2, T_{core}, T_{casing}, c_s, c_e, SOH]^T$
-
-2.2 Core Dynamics
-*   **Electrical (Enhanced ECM + DFN Hybrid):** $V_t = OCV(SOC, T) - IR_0^{eff} - V_1 - V_2 - \eta_{ct} - \eta_{diff}$
-*   **Thermal (Distributed):** $C\dot{T} = KT + Q_{gen} - Q_{fluid} - Q_{conv}$
-*   **Aging (SOH):** $(SOH) \dot{} = -f(I, T, SOC)$ including SEI growth kinetics.
-
-2.3 Control Layers
-*   **C-Rate Controller:** $I_{cmd} = sat(I_{ref}, I_{min}, I_{max})$
-*   **Cell Equalizer:** Minimized SOC dispersion via passive bleed or active shuttle.
-*   **Thermal Limiter:** $I_{cmd}^{th} = I_{cmd} \cdot e^{-\lambda(T_{max}-T_{safe})^+ - \gamma|\nabla T|}$
-*   **Pump Control:** $\omega_{pump} = k_1(T_{max}-T_{safe}) + k_2|\nabla T| + k_3I$.
-*   **Power Quality Control:** DVR-equivalent sag compensation and frequency stabilization via SRF-PLL feedback.
-*   **Grid Stress Derating:** $I_{cmd}^{grid} = I_{cmd} \cdot e^{-\mu D_k}$ where $D_k = \alpha|\Delta V| + \beta|\Delta f| + \gamma B$
-
-3. Final Plant Arbitration
-All constraints collapse into current arbitration to ensure safe operation under grid instability:
-$I = min(I_{C-rate}, I_{thermal}, I_{grid}, I_{SOH})$
+3. RESEARCH SCOPE DECOMPOSITION
+This research maintains a clean separation between the physical plant and the control algorithms:
+*   **Fixed Plant Model:** The NFPP Cell (DFN-informed) and the Aluminum-based Thermal/Fluid network are treated as the static environment.
+*   **Variable BMS Layer:** The core contribution lies in the design, stability, and robustness of the estimation and protection algorithms described above.
