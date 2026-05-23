@@ -19,7 +19,7 @@ except ImportError:
 class MaterialSystemOptimizer:
     """
     Automated discovery of low-fluorine electrolyte systems and high-capacity
-    alloying electrodes, ranked by USGS/IEA metrics.
+    doped electrodes, ranked by USGS/IEA metrics.
     """
     def __init__(self):
         self.base_url = "http://oqmd.org/oqmdapi/formationenergy"
@@ -60,9 +60,9 @@ class MaterialSystemOptimizer:
 
             # Goal-specific penalties/rewards
             f_penalty = 1.0 + 20.0 * name.count('F') if target_type in ["Salt", "Solvent"] else 1.0
-            alloy_reward = 0.4 if any(x in name for x in ["Sn", "Sb", "P"]) and "Anode" in target_type else 1.0
+            doping_reward = 0.4 if any(x in name for x in ["Sn", "Sb", "P"]) and "Anode" in target_type else 1.0
 
-            m['final_rank'] = stability * price_idx * crit_idx * f_penalty * alloy_reward
+            m['final_rank'] = stability * price_idx * crit_idx * f_penalty * doping_reward
 
         return sorted(materials, key=lambda x: x['final_rank'])[0] if materials else None
 
@@ -70,7 +70,7 @@ class MaterialSystemOptimizer:
         print("Discovering custom chemistry candidates...")
         targets = {
             "Salt": "Na*", "Solvent": "C*H*O*",
-            "Anode": "Na*Sn*", "Cathode": "Na*Fe*P*"
+            "Anode_Dopant": "Na*Sn*", "Cathode_Dopant": "Na*Fe*P*"
         }
         custom_sys = {}
         for k, v in targets.items():
@@ -182,10 +182,10 @@ class DSMOptimizer:
     def run(self):
         print("Starting DSMO Multiphysics Optimization...")
 
-        # Phase 1: Custom Chemistry Discovery
+        # Phase 1: Custom Chemistry Discovery (Doping & Low-F)
         searcher = MaterialSystemOptimizer()
         chemistry = searcher.discover_custom_chemistry()
-        print(f"Chemistry Discovered (Low-F/High-Cap): {[v['name'] for v in chemistry.values()]}")
+        print(f"Chemistry Discovered (Low-F/High-Cap Doping): {[v['name'] for v in chemistry.values()]}")
 
         # Phase 2: Structural Manifold Optimization
         self.setup_multiphysics_system()

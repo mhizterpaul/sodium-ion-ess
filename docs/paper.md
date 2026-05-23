@@ -89,12 +89,12 @@ The objective is to identify cost-effective, low-fluorine alternatives for the S
 *   **Stability (DFT Data):** Thermodynamic stability and energy above hull from OQMD.
 *   **Cost & Criticality (USGS/IEA):** Economic viability and supply chain risk indices.
 
-1.2 Electrode Alloying Optimization
-To increase battery capacity, alloying strategies are explored for both the anode and cathode. The framework searches for alloying candidates that are compatible with the existing NFPP/Hard Carbon architecture while maximizing theoretical specific capacity. Ranking is based on:
-*   **Capacity Gain:** Theoretical increase in Ah/kg.
-*   **Architectural Compatibility:** Structural stability during cycling and interfacial compatibility.
+1.2 Electrode Doping Optimization
+To increase battery capacity, doping strategies are explored for the electrodes. The framework searches for doping candidates that are compatible with the existing NFPP architecture while maximizing theoretical specific capacity. Ranking is based on:
+*   **Capacity Gain:** Theoretical increase in specific capacity (mAh/g).
+*   **Architectural Compatibility:** Structural stability during cycling and compatibility with existing binder and current collector systems.
 
-The highest-ranking material set is selected to inform the subsequent DFN (Doyle-Fuller-Newman) structural simulations.
+The highest-ranking material set (electrolyte and dopants) is selected as the alternate system. Quantum-level DFT data is used to verify thermodynamic compatibility, while the subsequent DFN (Doyle-Fuller-Newman) simulations focus on optimizing the cell's structural design parameters.
 
 2. Unified Multiphysics Operator (DSMO)
 *   **Electrochemical/Thermal Subsystem (PyBaMM):** DFN system solved with CasADi backend for exact sensitivity extraction.
