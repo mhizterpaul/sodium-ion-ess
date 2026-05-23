@@ -1,52 +1,41 @@
 %% NFPP Physical Plant Builder (Simscape Equivalent)
 % Ref: docs/paper.md
-% Updates: 4-Pack Architecture, 3 Transverse Fin Sets, 45% Tube Contact
+% Updates: 8-Tube Dual-Pump Loop, Horizontal Fin Rejection
 
 function plant = build_physical_plant(params)
     % 1. Grid & PCCS Subsystem
     plant.pccs.type = 'Power Conversion and Conditioning System';
-    plant.pccs.topology = 'Grid -> STS -> PQC -> DC Link -> DC/DC';
 
-    % 2. Modular Pack Assembly (16 Cells -> 4 Packs)
+    % 2. Modular Pack Assembly (4 Packs of 4)
     num_packs = 4;
-    cells_per_pack = 4;
     plant.packs = cell(num_packs, 1);
 
     for p = 1:num_packs
         plant.packs{p}.id = ['Pack_' num2str(p)];
-        plant.packs{p}.cells = cell(cells_per_pack, 1);
-
-        for c = 1:cells_per_pack
+        plant.packs{p}.cells = cell(4, 1);
+        for c = 1:4
             plant.packs{p}.cells{c}.type = 'nfpp_cell.ssc';
-            plant.packs{p}.cells{c}.casing = 'Poly-material only';
-            plant.packs{p}.cells{c}.dims = [130, 70]; % mm
         end
 
-        % Transverse Fins (3 sets total, located at inter-pack interfaces)
-        if p < num_packs
-            plant.packs{p}.thermal.inter_pack_fin.type = 'coolant_tubing.ssc';
-            plant.packs{p}.thermal.inter_pack_fin.fins = 'Transverse (Set ' num2str(p) ' of 3)';
-            plant.packs{p}.thermal.inter_pack_fin.contact = '45% Area-to-Tube';
-        end
+        % Thermal: Sinusoidal 8-Tube Manifold
+        plant.packs{p}.thermal.tubing.type = 'coolant_tubing.ssc';
+        plant.packs{p}.thermal.tubing.count = 8;
     end
 
-    % 3. ESS Unit Physical Dimensions (450x180x140 mm)
+    % 3. Fluid & Rejection Loop
+    % Loop: Pump1 -> 8 Tubes -> Pump2 -> Split -> 8 Tubes -> Hose -> Pump1
+    plant.cooling.pump_system = 'Dual distributed BLDC (Pump1, Pump2)';
+    plant.cooling.piping = '8-Microtube Al 3003 Sinusoidal Loop';
+    plant.cooling.rejection.type = 'rejection_stage.ssc';
+    plant.cooling.rejection.fins = 'Horizontal Aluminum';
+    plant.cooling.rejection.bridge = 'Conducting plate (140mm wide)';
+
+    % 4. ESS Dimensions (450x180x140 mm)
     plant.enclosure.type = 'aluminum_heat_sink.ssc';
-    plant.enclosure.height = 450;
-    plant.enclosure.length = 180;
-    plant.enclosure.width = 140;
-
-    % 4. Active Rejection & Tubing System
-    plant.cooling.atomizers = 2;
-    plant.cooling.draft = '3-Airway (Left/Right Inlets, Back Outlet)';
-
-    % Derived total number of tubes:
-    % 2 per pack (Primary + Secondary) * 4 packs = 8 total
-    plant.cooling.tubing.total_count = 8;
-    plant.cooling.tubing.types = {'4x Primary (3C+2W)', '4x Secondary (3C)'};
+    plant.enclosure.dims = [450, 180, 140];
 
     disp('Full ESS Digital Twin Built:');
-    disp('  Hierarchy: 16S1P -> 4 Packs of 4 Cells');
-    disp('  Thermal: 3 Transverse Fin Sets with 45% Tubing Contact');
-    disp('  Chassis: Aluminum Heat Sink (450x180x140 mm)');
+    disp('  Topology: 16S1P (4 Packs of 4) with 8-Tube Dual-Pump Loop');
+    disp('  Rejection: Horizontal Fins with Thermal Bridge to Inlets');
+    disp('  Enclosure: Aluminum (450x180x140 mm)');
 end

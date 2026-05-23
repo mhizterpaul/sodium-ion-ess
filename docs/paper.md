@@ -128,12 +128,12 @@ $C\dot{T} = KT + Q_{gen} - Q_{fluid} - Q_{conv}$
 
 | Component | Physical Specification |
 | :--- | :--- |
-| **Aluminum Heat Sink** | Aluminum alloy enclosure acting as both structural bridge and heat sink, touching the battery pack and both chassis lateral walls. Integrated high-density fin array. |
-| **Coolant Loop** | Dual-tube sinusoidal Aluminum Alloy 3003 microtubes (~45% surface contact) carrying 60/40 Water-Glycol. Total of 8 microtubes (2 per pack: 1 primary, 1 secondary). Primary tubing follows $L \approx 3 \times C_{pack} + 2 \times W_{unit}$ with a thinner profile at the rejection port; secondary tubing follows $L \approx 3 \times C_{pack}$. |
+| **Aluminum Heat Sink** | Aluminum alloy enclosure acting as structural bridge and heat sink, touching battery pack and both chassis lateral walls. Integrated high-density fin array. |
+| **Piping Architecture** | Distributed loop with 8 Aluminum Alloy 3003 microtubes. Tubes trace sinusoidal paths around cell packs. Loop: 1st Pump → 8 tubes → 2nd Pump → split → 8 tubes → collector hose → 1st Pump. |
+| **Pump System** | Dual-pump configuration. 2nd pump located at a distance from 1st to maintain pressure across the 8-tube manifold. |
 | **Tubing Spacing** | Differentiated: 6–9 mm at indraft inlets, 10–15 mm at cell coating contact. |
-| **Pump Actuator** | Magnetically coupled BLDC centrifugal micropump (1–5 L/min, 3–15 W). |
-| **Draft Topology** | 3-airway system (two inlets on left and right at 30% length, one exit at back) covering 45% height with oblong rectangular orifices. |
-| **Rejection Port** | Two ultrasonic piezoelectric atomizers (80–150 kHz) for aerosol-enhanced evaporative cooling ($Q = hA\Delta T + \dot{m}L_v$). |
+| **Rejection Port** | Horizontal aluminum fins integrated at the back exit. A conducting metal plate (width ~140mm) connects rejection fins to the closest fins of the L/R inlet airways. |
+| **Draft Topology** | 3-airway system (side inlets at 30% length, exit at back) covering 45% height. Draft is enhanced by thermal bridging between inlet and rejection stages. |
 
 **Thermal Node Topology:**
 *   Cell Core (heat source) → Cell Casing (poly) → Aluminum Heat Sink (lateral bridge) → Tubing Wall (Al 3003) → Working Fluid (transport).

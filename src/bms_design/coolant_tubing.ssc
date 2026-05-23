@@ -1,62 +1,44 @@
 component coolant_tubing
-% Dual-Tube Network (Al 3003 with 45% Fin Contact)
-% Ref: docs/paper.md
-% Updates: 3 Sets of transverse fins, 45% fin-tubing contact
+% 8-Microtube Sinusoidal Loop (Aluminum Alloy 3003)
+% Ref: docs/paper.md section 1.2
+% 1st Pump -> 8 tubes -> 2nd Pump -> 8 tubes -> Collector Hose
 
 nodes
     wall   = foundation.thermal.thermal; % Tube wall:top
-    inlet  = foundation.thermal.thermal; % Fluid inlet:left
-    outlet = foundation.thermal.thermal; % Fluid outlet:right
-    air    = foundation.thermal.thermal; % Air draft:bottom
+    inlet  = foundation.thermal.thermal; % From Pump:left
+    outlet = foundation.thermal.thermal; % To Collector:right
 end
 
 parameters
-    k_tube = {163, 'W/(m*K)'};
+    k_tube = {163, 'W/(m*K)'};   % Al 3003
     d_inner = {0.006, 'm'};
-    d_reject = {0.004, 'm'};    % Thinner at rejection port
     t_wall = {0.001, 'm'};
-    % Length: 3 * C_pack + 2 * W_unit (Primary) or 3 * C_pack (Secondary)
-    % C_pack approx 2 * (130+70+10) = 420mm
-    % L_prim = 3 * 0.42 + 2 * 0.14 = 1.54; L_sec = 3 * 0.42 = 1.26
-    length = {1.54, 'm'};
+    length_tot = {1.54, 'm'};    % 3C + 2W
     cp_fluid = {3400, 'J/(kg*K)'};
     h_int = {1200, 'W/(m^2*K)'};
-    h_ext = {80, 'W/(m^2*K)'};
-    coverage_factor = {0.45, '1'};
-
-    % Transverse Fin Parameters
-    A_fin_total = {0.0375, 'm^2'}; % Total area for 3 fin sets (normalized)
-    fin_contact_frac = {0.45, '1'}; % 45% of fin is in contact with tube
+    n_tubes = {8, '1'};
+    coverage = {0.45, '1'};
 end
 
 variables
     T_wall = {298.15, 'K'};
-    mdot = {0.05, 'kg/s'};
+    mdot_total = {0.1, 'kg/s'};
 end
 
 equations
     T_wall == wall.T;
 
     let
-        % Tube-to-Fluid Area
-        A_contact = {3.14159, '1'} * d_inner * length * coverage_factor;
-
-        % Fin Area Decomposition
-        A_fin_tube_contact = A_fin_total * fin_contact_frac;
-        A_fin_exposed = A_fin_total * ({1, '1'} - fin_contact_frac);
-
+        % Effective contact area for 8 sinusoidal tubes
+        A_contact = n_tubes * {3.14159, '1'} * d_inner * length_tot * coverage;
         T_fluid_avg = (inlet.T + outlet.T) / {2, '1'};
     in
         % Internal Heat Exchange (Wall to Fluid)
         wall.Q == h_int * A_contact * (T_wall - T_fluid_avg);
 
-        % Conduction to Fins and Convection to Air Draft
-        % Assuming fins are high-conductivity, T_fin approx T_wall
-        air.Q == h_ext * A_fin_exposed * (T_wall - air.T);
-
-        % Outlet Energy Balance
+        % Global energy balance across 8 tubes
         outlet.Q == -inlet.Q + wall.Q;
-        mdot * cp_fluid * (outlet.T - inlet.T) == wall.Q;
+        mdot_total * cp_fluid * (outlet.T - inlet.T) == wall.Q;
     end
 end
 

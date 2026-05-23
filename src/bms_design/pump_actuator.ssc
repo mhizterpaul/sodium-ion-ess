@@ -1,6 +1,6 @@
 component pump_actuator
-% BLDC Centrifugal Micropump
-% Ref: docs/paper.md section 5
+% Distributed Dual-Pump BLDC System
+% Ref: docs/paper.md section 1.2
 
 nodes
     p = foundation.electrical.electrical; % +:left
@@ -8,10 +8,7 @@ nodes
 end
 
 inputs
-    T_max = {298.15, 'K'};
-    T_safe = {308.15, 'K'};
-    grad_T = {0, 'K'};
-    I_cell = {0, 'A'};
+    omega_cmd = {0, 'rad/s'};
 end
 
 outputs
@@ -19,33 +16,21 @@ outputs
 end
 
 parameters
-    V_supply = {12, 'V'};
-    k1 = {0.01, 'rad/(s*K)'};
-    k2 = {0.005, 'rad/(s*K)'};
-    k3 = {0.001, 'rad/(s*A)'};
-    rho_fluid = {1000, 'kg/m^3'};
-    R_motor = {10, 'Ohm'};
-    k_flow = {0.1, '(kg/s)/(rad/s)'};
+    n_pumps = {2, '1'};
+    R_motor_total = {20, 'Ohm'}; % Cumulative resistance
+    k_flow = {0.05, '(kg/s)/(rad/s)'};
 end
 
 variables
     i = {0, 'A'};
-    omega = {0, 'rad/s'};
 end
 
 equations
-    % Electrical
-    i == (p.v - n.v) / R_motor;
+    i == (p.v - n.v) / R_motor_total;
     p.i + n.i == {0, 'A'};
 
-    % Control Law: omega = k1(Tmax - Tsafe) + k2|gradT| + k3*I
-    let
-        T_diff = if T_max > T_safe, T_max - T_safe else {0, 'K'} end;
-        omega_cmd = k1 * T_diff + k2 * abs(grad_T) + k3 * abs(I_cell);
-    in
-        omega == omega_cmd;
-        mdot == k_flow * omega;
-    end
+    % Two pumps working in series to maintain pressure across 8 tubes
+    mdot == n_pumps * k_flow * omega_cmd;
 end
 
 end
