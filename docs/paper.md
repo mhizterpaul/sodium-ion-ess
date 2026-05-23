@@ -75,8 +75,11 @@ where: n_"crit" = cycles to onset of irreversible deformation, t_"crit" = time t
 This defines the deformation endurance boundary of the continuum under coupled electrochemical–thermal loading.
 
 NFPP Cell Optimization: Hierarchical Co-Optimization Framework
+Methodological Scope Statement
+This work presents a constrained multiphysics optimization framework for NFPP-based sodium-ion cells, where material variation is restricted to dopant-level and electrolyte (salt/solvent) chemistry, coupled with structural and thermal co-optimization via Differentiable Sensitivity Manifold Optimization (DSMO).
+
 Objective Definition
-The cell design is optimized using a hierarchical Material-Structural framework. The primary objective is to discover chemistry modifications (dopants/salts/solvents) compatible with the validated NFPP architecture while simultaneously fine-tuning structural parameters. Cost reduction and performance gains are driven by **material production optimization**, focusing on purification, extraction, and supply-chain criticality.
+The cell design is optimized using a hierarchical Material-Structural framework. The primary objective is to discover chemistry modifications (dopants/salts/solvents) compatible with the already-validated NFPP architecture while simultaneously fine-tuning structural parameters. Cost reduction and performance gains are driven by **material production optimization**, focusing on purification, extraction, and supply-chain criticality.
 
 1. Stage A-C: Material Discovery & Compatibility Engine
 This phase identifies chemistry modifications compatible with the existing NFPP/Hard Carbon architecture.
@@ -157,8 +160,31 @@ The integrated ESS unit, housing the 16S1P pack and the power conversion system,
 *   **Length:** 180 mm (aligned with 130 mm cell length plus manifold clearances).
 *   **Width:** 140 mm (aligned with 70 mm cell width plus finned chassis thickness).
 
-2. SIMULINK BMS CONTROL SYSTEM MODEL
-The BMS is designed as a model-based, constraint-driven control system for sodium-ion ESS operation under unstable grid conditions.
+2. BMS CONTROL ARCHITECTURE & ALGORITHMS
+The BMS is designed as a model-based, constraint-driven control system for sodium-ion ESS operation under unstable grid conditions. The architecture follows a robust 5-layer hierarchy:
+
+**Layer 1: Safety & Fault Diagnostics**
+*   Hierarchical multi-tier fault classification (Warning, Derating, Shutdown, Latched Lockout).
+*   Safety limits: $T_{max} < 85^{\circ}C$, $V_{cell} < 3.9V$.
+*   Diagnostic logic for contactor weld and sensor drift detection.
+
+**Layer 2: Deterministic State Machine**
+*   Supervisory control managing transitions: Standby $\rightarrow$ Precharge $\rightarrow$ Run $\rightarrow$ Fault.
+*   Handles fast switching (<4ms) via the Static Transfer Switch (STS).
+
+**Layer 3: State Estimation & Monitoring**
+*   5th-order Polynomial OCV-SOC mapping for NFPP:
+    $V_{oc} = 2.0 + 3.5(SOC) - 5.1(SOC)^2 + 4.8(SOC)^3 - 2.1(SOC)^4 + 0.5(SOC)^5$
+*   High-fidelity SRF-PLL for grid Frequency and ROCOF monitoring.
+
+**Layer 4: Optimal Energy Management & Control**
+*   **C-Rate Control:** Power tracking while respecting SOX (SOC/SOH/SOP) constraints.
+*   **Thermal Derating:** MPC-inspired arbitration to minimize thermal stress: $I_{cmd} = sat(I_{ref}, I_{min}, I_{max})$.
+*   **Grid Stability Control:** DVR-equivalent voltage sag compensation and frequency response support.
+
+**Layer 5: Balancing & Actuation**
+*   **Cell Equalization:** SOC-based passive balancing using energy-dissipation logic: $P_{balance} = \frac{(V_{cell} - V_{avg})^2}{R_{bleed}}$.
+*   Coordinated control of main and pre-charge contactors.
 
 2.1 Plant State Representation
 State vector: $x = [SOC, V_1, V_2, T_{core}, T_{casing}, c_s, c_e, SOH]^T$
