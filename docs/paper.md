@@ -74,44 +74,31 @@ The structural output is expressed as a reduced endurance response under strain 
 where: n_"crit" = cycles to onset of irreversible deformation, t_"crit" = time to onset under operating profile, ε_"int" = applied or induced strain intensity 
 This defines the deformation endurance boundary of the continuum under coupled electrochemical–thermal loading.
 
-NFPP Cell Optimization: Differentiable Sensitivity Manifold Optimizer (DSMO)
+NFPP Cell Optimization: Hierarchical Co-Optimization Framework
 Objective Definition
-The cell design is optimized using a Differentiable Sensitivity Manifold Optimizer (DSMO) that treats the battery as a fully coupled multiphysics operator $y = F(\theta)$, where $\theta$ represents electrochemical, thermal, and mechanical parameters, and $y$ represents observables (Voltage, Temperature, SOC, Stress, Strain).
+The cell design is optimized using a hierarchical Material-Structural framework. The primary objective is to discover chemistry modifications (dopants/salts/solvents) compatible with the validated NFPP architecture while simultaneously fine-tuning structural parameters. Cost reduction and performance gains are driven by **material production optimization**, focusing on purification, extraction, and supply-chain criticality.
 
-A critical aspect of the framework is that cost reduction and performance gains are primarily driven by **material production optimization**, specifically focusing on purification and extraction cost efficiencies, as well as **material pricing and supply chain criticality**. While cell structural parameters are fine-tuned for performance, full-scale **manufacturing process optimization** is considered outside the current research scope and is left to future implementers who may find this work useful for commercial deployment.
+1. Stage A-C: Material Discovery & Compatibility Engine
+This phase identifies chemistry modifications compatible with the existing NFPP/Hard Carbon architecture.
+*   **Electrolyte & Fluorine Reduction:** Discovery of low-fluorine salts and solvents (AFLOW/OQMD/MP) to reduce environmental burden and cost.
+*   **Electrode Doping:** Fe-site doping for cathodes and Na-insertion doping for anodes to improve capacity.
+*   **Constraint Engine:** Rejects candidates violating structural (ionic radius), valence (neutrality), or voltage (|dV| > 0.15V) preservation rules.
+*   **Thermodynamic Screening:** Ensures energy-above-hull $E_{hull} < 50$ meV/atom.
+*   **Multi-Objective Pareto Ranking:** Ranking candidates using the objective vector $J = [E_d, L_c, C, R_c, F, S]$ (Energy Density, Life, Production Cost, Criticality, Fluorine, Safety).
+    *   **Cost & Pricing (USGS):** Uses production and reserve data from USGS Mineral Commodity Summaries.
+    *   **Criticality (IEA):** Integrates IEA Critical Minerals indices and supply-chain rarity heuristics.
 
-1. Material System Optimization & Discovery
-A preliminary stage performs automated materials discovery by querying external databases (AFLOW, OQMD, Materials Project) to identify optimal material systems for the battery. This phase focuses on two critical optimizations:
+2. Stage D: Electrochemical Projection Layer
+Selected material modifications are projected onto the validated DFN parameter set as perturbations:
+$\theta' = \theta_{base} (1 + \Delta \theta_{material})$
+This ensures DFN simulation validity by maintaining compatibility with the calibrated baseline.
 
-1.1 Electrolyte Selection & Fluorine Reduction
-The objective is to identify cost-effective, low-fluorine alternatives for the Salt and Solvent. Material ranking utilizes:
-*   **Fluorine Minimization:** Penalty-based heuristic favoring fluorine-free alternatives.
-*   **Stability (DFT Data):** Thermodynamic stability and energy above hull from OQMD.
-*   **Cost & Criticality (USGS/IEA):** Economic viability and supply chain risk indices.
-
-1.2 Electrode Doping Optimization
-To increase battery capacity, doping strategies are explored for the electrodes. The framework searches for doping candidates that are compatible with the existing NFPP architecture while maximizing theoretical specific capacity. Ranking is based on:
-*   **Capacity Gain:** Theoretical increase in specific capacity (mAh/g).
-*   **Architectural Compatibility:** Structural stability during cycling and compatibility with existing binder and current collector systems.
-
-The highest-ranking material set (electrolyte and dopants) is selected as the alternate system. Quantum-level DFT data is used to verify thermodynamic compatibility, while the subsequent DFN (Doyle-Fuller-Newman) simulations focus on optimizing the cell's structural design parameters.
-
-2. Unified Multiphysics Operator (DSMO)
-*   **Electrochemical/Thermal Subsystem (PyBaMM):** DFN system solved with CasADi backend for exact sensitivity extraction.
-*   **Mechanical Subsystem (FEniCSx):** Thermoelastic PDE mechanics modeling stress/strain evolution under coupled thermal and concentration gradients.
-
-3. Sensitivity Manifold Computation
-Full Jacobian assembly $S = \partial y / \partial \theta$ captures:
-*   Electrochemical sensitivities: Exact Jacobian extraction via CasADi.
-*   Mechanical sensitivities: Concrete adjoint linearized FEM sensitivities from FEniCSx ($S_{mech} = du/d\theta = -(dR/du)^{-1} \cdot dR/d\theta$).
-*   Chain-rule coupling across thermal and SOC fields.
-
-The sensitivity manifold metric $G = S^T S$ defines the curvature of the design space, identifying parameter coupling and identifiability geometry.
-
-4. Gauss–Newton Manifold Optimization Rule
-The design parameters $\theta$ (thickness, porosity, particle size, modulus) are updated iteratively using the rule:
-$\theta_{k+1} = \theta_k - \eta (S^T S + \lambda I)^{-1} S^T (y - y_{target})$
-where $y_{target}$ is the performance vector.
+3. Stage E-F: Differentiable Sensitivity Manifold Optimizer (DSMO)
+The projected design space is optimized using a coupled multiphysics operator $y = F(\theta)$.
+*   **Electrochemical/Thermal (PyBaMM):** DFN system with CasADi backend for exact sensitivity extraction.
+*   **Mechanical (FEniCSx):** Adjoint linearized FEM sensitivities ($S_{mech}$) modeling thermoelastic and intercalation strain.
+*   **Update Rule:** Gauss–Newton (Levenberg-Marquardt) update on the sensitivity manifold:
+    $\theta_{k+1} = \theta_k - \eta (S^T S + \lambda I)^{-1} S^T (y - y_{target})$
 5. Stability Validation (Physics Consistency Check)
 The final optimized configuration is validated using a coupled reduced-order physics framework with PyBaMM, evaluating electrochemical and thermal behavior under full operating stress conditions.
 The model tracks SOC during discharge operation and HOC evolution alongside thermal PDE response under peak current loading and transient demand profiles.
