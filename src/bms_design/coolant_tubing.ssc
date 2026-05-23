@@ -1,24 +1,29 @@
 component coolant_tubing
-% Dual-Tube Network (Aluminum Alloy 3003)
+% Dual-Tube Network (Aluminum Alloy 3003 with Transverse Fins)
 % Ref: docs/paper.md
-% Updates: 45% surface contact, Al 3003, 60/40 Water-Glycol
+% Updates: Transverse fins for inter-pack air draft exchange
 
 nodes
-    wall = foundation.thermal.thermal; % Tube wall:top
-    inlet = foundation.thermal.thermal;  % Fluid inlet:left
+    wall   = foundation.thermal.thermal; % Tube wall:top
+    inlet  = foundation.thermal.thermal; % Fluid inlet:left
     outlet = foundation.thermal.thermal; % Fluid outlet:right
+    air    = foundation.thermal.thermal; % External air draft:bottom
 end
 
 parameters
     k_tube = {163, 'W/(m*K)'};   % Al 3003
     d_inner = {0.006, 'm'};
     t_wall = {0.001, 'm'};
-    length = {0.8, 'm'};         % Increased for sinusoidal path
+    length = {0.8, 'm'};
     cp_fluid = {3400, 'J/(kg*K)'}; % 60/40 Water-Glycol
-    h_coeff = {1200, 'W/(m^2*K)'};
-    coverage_factor = {0.45, '1'}; % 45% surface contact
-    spacing_inlet = {0.007, 'm'};   % 7mm pitch at indraft inlets
-    spacing_cell_coating = {0.012, 'm'}; % 12mm pitch in contact with cell coating
+    h_int = {1200, 'W/(m^2*K)'};   % Internal convection (fluid)
+    h_ext = {80, 'W/(m^2*K)'};     % External convection (air draft)
+    coverage_factor = {0.45, '1'};
+    spacing_inlet = {0.007, 'm'};
+    spacing_cell_coating = {0.012, 'm'};
+
+    % Transverse Fin Parameters
+    fin_area_multiplier = {3.5, '1'}; % Surface area gain from fins
 end
 
 variables
@@ -30,14 +35,20 @@ equations
     T_wall == wall.T;
 
     let
-        % Effective contact area based on 45% coverage
+        % Areas
         A_contact = {3.14159, '1'} * d_inner * length * coverage_factor;
+        A_ext = {3.14159, '1'} * (d_inner + {2, '1'}*t_wall) * length * fin_area_multiplier;
+
         T_fluid_avg = (inlet.T + outlet.T) / {2, '1'};
     in
-        wall.Q == h_coeff * A_contact * (T_wall - T_fluid_avg);
-        outlet.Q == -inlet.Q + wall.Q;
+        % Internal Heat Exchange (Wall to Fluid)
+        wall.Q == h_int * A_contact * (T_wall - T_fluid_avg);
 
-        % Energy balance
+        % External Heat Exchange (Wall to Air Draft via Transverse Fins)
+        air.Q == h_ext * A_ext * (T_wall - air.T);
+
+        % Energy balance at outlet
+        outlet.Q == -inlet.Q + wall.Q;
         mdot * cp_fluid * (outlet.T - inlet.T) == wall.Q;
     end
 end

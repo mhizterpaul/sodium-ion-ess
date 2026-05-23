@@ -1,44 +1,42 @@
 %% NFPP Physical Plant Builder (Simscape Equivalent)
 % Ref: docs/paper.md
-% Updates: Aluminum Heat Sink, 2 Atomizers, PCCS System
+% Updates: Pack-level Architecture (4 cells/pack), Finned Tubing
 
 function plant = build_physical_plant(params)
-    % 1. Grid & Power Conversion and Conditioning System (PCCS)
-    plant.grid.type = 'grid_interface.ssc';
-    plant.sts.type = 'static_transfer_switch.ssc';
-    plant.pqc.type = 'power_quality_conditioner.ssc';
-    plant.pcs.type = 'bidirectional_dc_dc.ssc';
+    % 1. Grid & PCCS
+    plant.pccs.type = 'Power Conversion and Conditioning System';
+    plant.pccs.topology = 'Grid -> STS -> PQC -> DC Link -> DC/DC';
 
-    % 2. Battery Pack & Thermal Layer
-    num_cells = 16;
-    plant.cells = cell(num_cells, 1);
-    for i = 1:num_cells
-        cap_variation = 1 + (0.02 * randn());
-        res_variation = 1 + (0.01 * randn());
+    % 2. Pack-level Assembly (16 cells -> 4 packs)
+    num_packs = 4;
+    cells_per_pack = 4;
+    plant.packs = cell(num_packs, 1);
 
-        plant.cells{i}.type = 'nfpp_cell.ssc';
-        plant.cells{i}.casing = 'Poly-material only';
-        plant.cells{i}.Q_nom = 10 * cap_variation;
+    for p = 1:num_packs
+        plant.packs{p}.id = ['Pack_' num2str(p)];
+        plant.packs{p}.cells = cell(cells_per_pack, 1);
 
-        % Thermal: Aluminum Heat Sink Enclosure
-        plant.cells{i}.thermal.heatsink = 'aluminum_heat_sink.ssc';
-        plant.cells{i}.thermal.tubing = 'coolant_tubing.ssc';
+        for c = 1:cells_per_pack
+            plant.packs{p}.cells{c}.type = 'nfpp_cell.ssc';
+            plant.packs{p}.cells{c}.casing = 'Poly-material (no Al)';
+        end
+
+        % Finned Tubing Interface between each pack
+        plant.packs{p}.thermal.tubing_interface.type = 'coolant_tubing.ssc';
+        plant.packs{p}.thermal.tubing_interface.fins = 'Transverse (Al 3003)';
     end
 
-    % 3. Cooling Infrastructure
-    plant.cooling.pump = 'pump_actuator.ssc';
-    plant.cooling.atomizers = '2 total (1 per side)';
+    % 3. Chassis & Active Rejection
+    plant.chassis.heatsink = 'aluminum_heat_sink.ssc';
+    plant.cooling.atomizers = 2; % One per side
     plant.cooling.topology = '3-Airway induced draft';
 
-    % 4. Sensors & Diagnostics
-    plant.sensors.voltage.precision = '16-bit';
-    plant.diagnostics.manufacturing_optimization = 'Potential further gain through process refinements';
-
-    plant.config = '16S1P';
+    % 4. System Summary
+    plant.config = '16S1P (4 Packs of 4)';
     plant.nominal_voltage = 16 * 3.2;
 
-    disp('ESS Digital Twin Model Built:');
-    disp('  Thermal: Aluminum Heat Sink Enclosure + Sinusoidal Dual-Tube');
-    disp('  Reject: Aerosol-Enhanced (2 Atomizers)');
-    disp('  Power: Power Conversion and Conditioning System (PCCS)');
+    disp('Full Multiphysics ESS Digital Twin Built:');
+    disp(['  Topology: ' plant.config]);
+    disp('  Thermal: Aluminum Finned Tubing + Induced Air Draft');
+    disp('  Rejection: Dual Ultrasonic Atomizers');
 end
