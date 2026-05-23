@@ -1,0 +1,30 @@
+component power_quality_conditioner
+% Power Quality Conditioner (PQC) / DVR
+% Ref: docs/paper.md section 7.1 & 7.2
+
+nodes
+    p_in = foundation.electrical.electrical;  % Input +
+    n_in = foundation.electrical.electrical;  % Input -
+    p_out = foundation.electrical.electrical; % Output +
+    n_out = foundation.electrical.electrical; % Output -
+end
+
+inputs
+    v_comp = {0, 'V'}; % Compensation voltage from controller
+end
+
+variables
+    i = {0, 'A'};
+end
+
+equations
+    % Series injection model for DVR-equivalent sag compensation
+    (p_out.v - n_out.v) == (p_in.v - n_in.v) + v_comp;
+
+    p_in.i == i;
+    p_out.i == -i;
+    n_in.i == -i;
+    n_out.i == i;
+end
+
+end

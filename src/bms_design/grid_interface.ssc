@@ -1,0 +1,55 @@
+component grid_interface
+% ESS Grid Interface: Active Rectifier + PLL + Estimators
+% Ref: docs/paper.md section 7
+
+nodes
+    p_ac = foundation.electrical.electrical; % AC terminal +
+    n_ac = foundation.electrical.electrical; % AC terminal -
+    p_dc = foundation.electrical.electrical; % DC Link +:right
+    n_dc = foundation.electrical.electrical; % DC Link -:right
+end
+
+outputs
+    v_rms = {0, 'V'};
+    freq = {0, 'Hz'};
+    rocof = {0, 'Hz/s'};
+    sag_detected = {0, '1'};
+end
+
+parameters
+    V_nom_rms = {230, 'V'};
+    f_nom = {50, 'Hz'};
+    C_link = {2200e-6, 'F'};
+end
+
+variables
+    v_dc = {0, 'V'};
+    i_dc = {0, 'A'};
+    v_ac = {0, 'V'};
+    phi = {0, 'rad'}; % PLL phase
+end
+
+equations
+    v_ac == p_ac.v - n_ac.v;
+    v_dc == p_dc.v - n_dc.v;
+
+    % Simplified SRF-PLL & Estimation Logic
+    phi.der == {2, '1'} * {3.14159, '1'} * freq;
+    v_rms == abs(v_ac) / sqrt({2, '1'}); % Simplistic RMS estimator
+
+    % Sag Detection
+    sag_detected == if v_rms < {0.9, '1'} * V_nom_rms, {1, '1'} else {0, '1'} end;
+
+    % Frequency Estimation (Simplified PLL derivative)
+    % In real SRF-PLL, freq would be derived from the PI controller output
+    freq == f_nom + {0.1, 'Hz/V'} * (v_ac * sin(phi));
+    rocof == freq.der;
+
+    % Rectifier Dynamics (Simplified)
+    v_dc == V_nom_rms * sqrt({2, '1'}) * {1.5, '1'}; % Boosted DC Link
+
+    p_dc.i == i_dc + C_link * v_dc.der;
+    n_dc.i == -p_dc.i;
+end
+
+end

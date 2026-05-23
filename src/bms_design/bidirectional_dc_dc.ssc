@@ -1,0 +1,51 @@
+component bidirectional_dc_dc
+% Bidirectional Buck-Boost DC/DC Converter
+% Ref: docs/paper.md section 17
+
+nodes
+    p_high = foundation.electrical.electrical; % High side (DC Link) +:left
+    n_high = foundation.electrical.electrical; % High side (DC Link) -:left
+    p_low  = foundation.electrical.electrical; % Low side (Battery) +:right
+    n_low  = foundation.electrical.electrical; % Low side (Battery) -:right
+end
+
+inputs
+    duty = {0.5, '1'}; % PWM duty cycle
+end
+
+parameters
+    L = {1e-3, 'H'};   % Inductor
+    C = {1e-3, 'F'};   % Filter capacitor
+    eff = {0.95, '1'}; % Efficiency
+end
+
+variables
+    i_high = {0, 'A'};
+    i_low  = {0, 'A'};
+    v_high = {0, 'V'};
+    v_low  = {0, 'V'};
+end
+
+equations
+    v_high == p_high.v - n_high.v;
+    v_low  == p_low.v - n_low.v;
+
+    % Idealized switching relation: V_low = duty * V_high
+    v_low == duty * v_high;
+
+    % Power balance with efficiency: P_low = eff * P_high (if charging)
+    % P = V * I. Here i_low is out of the converter into battery.
+    % i_high is into the converter from DC link.
+    if v_low * i_low > {0, 'W'} % Discharge (Battery to DC Link)
+        v_high * i_high == -eff * v_low * i_low;
+    else % Charge (DC Link to Battery)
+        v_low * i_low == -eff * v_high * i_high;
+    end
+
+    p_high.i == i_high;
+    n_high.i == -i_high;
+    p_low.i  == -i_low;
+    n_low.i  == i_low;
+end
+
+end

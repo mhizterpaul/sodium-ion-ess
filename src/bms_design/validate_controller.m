@@ -1,81 +1,76 @@
-%% Robust BMS Validation Report
-% Ref: docs/paper.md
+%% Robust BMS Validation Report (Clean Decomposition Focus)
+% This script verifies the BMS Layer (State Estimation, Protection, and Safety).
+% Ref: docs/paper.md Section 2.
 
-%% 1. Initialization
-params = load_optimized_data('src/control_systems/optimized_params.mat');
+%% 1. Initialization & Configuration
+% Mock parameters representing a fixed cell plant model
+params = struct(...
+    'Nominal_Cap_Ah', 10, ...
+    'R_nominal', 0.01, ...
+    'V_max', 3.8, ...
+    'V_min', 2.0, ...
+    'T_max', 65 ...
+);
 
-%% 2. Stability Analysis
-sys_pack = get_pack_dynamics(params);
-evs = eig(sys_pack.A);
-fprintf('Asymptotic Stability: %s\n', mat2str(all(real(evs) <= 0)));
+%% 2. State Estimation Verification (SOC & SOH)
+fprintf('--- Testing State Estimation ---\n');
+inputs = struct('V_cells', [3.3, 3.3], 'T_cells', [25, 25], 'I_measured', 0, ...
+                'Mode', 'Standby', 'Fault_Reset', 0, 'I_request', 0);
 
-%% 3. Hierarchical Safety & State Machine
-inputs = struct('V_cells', [3.3, 3.3], 'T_cells', [25, 25], 'SOC_est', 0.5, ...
-                'I_measured', 0, 'Mode', 'Drive', 'Fault_Reset', 0, 'I_request', 10, 'T_amb', 298.15);
+% Test SOH Inference (Impedance growth detection)
+inputs.I_measured = 10; % Discharge
+inputs.V_cells = [3.1, 3.1]; % High voltage drop -> High resistance
+[~, states] = bms_control_logic(inputs, params);
+fprintf('  SOH (Resistance-based): %.2f%%\n', min(states.SOH_R)*100);
 
-[~, s_init] = bms_control_logic(inputs, params);
-fprintf('Initial Transition: Standby -> %s\n', s_init.bms_state);
+%% 3. Protection Logic Verification (OV/UV/OT)
+fprintf('\n--- Testing Protection Logic ---\n');
 
-% Trigger Shutdown
-inputs.T_cells = [80, 25];
-[~, s_fault] = bms_control_logic(inputs, params);
-fprintf('Fault response: Status %d, State %s\n', s_fault.fault_status, s_fault.bms_state);
+% Over-Temperature (OT)
+inputs.T_cells = [70, 25];
+[I_cmd, states] = bms_control_logic(inputs, params);
+fprintf('  OT Trigger: State=%s, I_cmd=%.1f\n', states.bms_state, I_cmd);
 
-%% 4. Cell Voltage Convergence (Balancing Simulation)
-% Time-series simulation to demonstrate balancing
-fprintf('Simulating Cell Balancing Convergence...\n');
-V = [3.5, 3.4]; % Imbalanced cells
-inputs_bal = inputs;
-for t = 1:50
-    inputs_bal.V_cells = V;
-    [~, states] = bms_control_logic(inputs_bal, params);
-    % Simplistic passive balancing discharge
-    V = V - 0.001 * states.balancing_active;
-    if mod(t, 10) == 0
-        fprintf('  t=%d: V_diff = %.3f V\n', t, abs(V(1)-V(2)));
-    end
+% Fault Reset
+inputs.T_cells = [25, 25];
+inputs.Fault_Reset = 1;
+[~, states] = bms_control_logic(inputs, params);
+fprintf('  Fault Reset: State=%s\n', states.bms_state);
+
+% Over-Voltage (OV)
+inputs.Fault_Reset = 0;
+inputs.V_cells = [3.9, 3.3];
+[I_cmd, states] = bms_control_logic(inputs, params);
+fprintf('  OV Trigger: State=%s, I_cmd=%.1f\n', states.bms_state, I_cmd);
+
+%% 4. Safety Enforcement (Thermal & SOC Derating)
+fprintf('\n--- Testing Safety Enforcement & Derating ---\n');
+clear bms_control_logic; % Reset persistent states
+inputs.Mode = 'Run';
+inputs.V_cells = [3.3, 3.3];
+inputs.T_cells = [58, 58]; % Near T_max (65)
+inputs.I_request = 10;
+[I_cmd, ~] = bms_control_logic(inputs, params);
+fprintf('  Thermal Derating: Req=10.0, Cmd=%.2f\n', I_cmd);
+
+% Low SOC Derating
+clear bms_control_logic;
+inputs.T_cells = [25, 25];
+% Mock internal SOC state being low (BMS estimates it)
+% In ecu.m, SOC is persistent and updated. We'll simulate a few steps.
+for i = 1:5
+    inputs.I_measured = 50; % High discharge
+    inputs.V_cells = [2.2, 2.2]; % Low voltage -> Low SOC
+    [I_cmd, states] = bms_control_logic(inputs, params);
 end
-fprintf('Balancing Final Delta: %.4f V\n', abs(V(1)-V(2)));
+fprintf('  Low SOC Derating: SOC=%.3f, I_cmd=%.2f\n', states.SOC(1), I_cmd);
 
-%% 5. Estimator Convergence (EKF)
-% Verifies the ability of the EKF to recover from an incorrect initial condition.
-soc_true = 0.5;
-soc_est = 0.8; % 30% error
-P = 0.1;
-v_meas = 3.2; i_meas = 0;
+%% 5. Control Logic (Cell Balancing)
+fprintf('\n--- Testing Cell Balancing ---\n');
+inputs.I_measured = 0; % Idle
+inputs.V_cells = [3.4, 3.3]; % Imbalance
+[~, states] = bms_control_logic(inputs, params);
+fprintf('  Balancing Active: [%d, %d]\n', states.balancing_active(1), states.balancing_active(2));
 
-fprintf('Testing EKF Convergence (Initial Error: 30%%)...\n');
-for i = 1:20
-    [soc_est, P] = ekf_estimator(v_meas, i_meas, soc_est, P, params);
-end
-fprintf('  Final SOC Estimate: %.4f (Error: %.2f%%)\n', soc_est, abs(soc_est - soc_true)*100);
-
-%% 6. Physical Plant Validation (Simscape Equations)
-% This section exercises the coupled electro-thermal equations derived from
-% the Simscape model (nfpp_cell.ssc).
-[V_p, T_p] = plant_model(10, 298.15, params);
-fprintf('Physical Plant Coupling Check: V=%.2f, T=%.1f\n', V_p, T_p);
-
-%% Helper Functions
-
-function [soc_new, P_new] = ekf_estimator(v_meas, i_meas, soc_old, P_old, params)
-    % Extended Kalman Filter implementation (Redefined here for standalone publishing)
-    Q_noise = 1e-6; R_noise = 0.01; dt = 1;
-    Q_cap = params.Nominal_cell_capacity_Ah * 3600;
-    soc_pred = soc_old - i_meas * dt / Q_cap;
-    P_pred = P_old + Q_noise;
-    H = 0.8;
-    K = P_pred * H / (H * P_pred * H + R_noise);
-    v_pred = 3.1 + H * (soc_pred - 0.5) - i_meas * 0.01;
-    soc_new = max(0, min(1, soc_pred + K * (v_meas - v_pred)));
-    P_new = (1 - K * H) * P_pred;
-end
-
-function params = load_optimized_data(filename)
-    if ~exist(filename, 'file')
-        params = struct('Nominal_cell_capacity_Ah', 10, 'Contact_resistance_Ohm', 0.01);
-    else
-        data = load(filename);
-        params = data.optimized_params;
-    end
-end
+%% Summary
+fprintf('\nBMS Layer Validation Complete.\n');

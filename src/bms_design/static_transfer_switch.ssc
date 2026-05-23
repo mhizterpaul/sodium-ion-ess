@@ -1,0 +1,40 @@
+component static_transfer_switch
+% Static Transfer Switch (STS)
+% Ref: docs/paper.md section 7.1
+
+nodes
+    g_p = foundation.electrical.electrical; % Grid Positive:left
+    g_n = foundation.electrical.electrical; % Grid Negative:left
+    l_p = foundation.electrical.electrical; % Load Positive:right
+    l_n = foundation.electrical.electrical; % Load Negative:right
+end
+
+inputs
+    island_cmd = {0, '1'}; % 0: Grid-tied, 1: Islanded
+end
+
+parameters
+    R_on = {1e-3, 'Ohm'};
+    R_off = {1e6, 'Ohm'};
+    t_transfer = {4e-3, 's'}; % 4ms transfer time
+end
+
+variables
+    i = {0, 'A'};
+end
+
+equations
+    let
+        R_sw = if island_cmd > {0.5, '1'}, R_off else R_on end;
+    in
+        (g_p.v - l_p.v) == i * R_sw;
+        (g_n.v - l_n.v) == {0, 'V'}; % Simplified common ground
+    end
+
+    g_p.i == i;
+    l_p.i == -i;
+    g_n.i == {0, 'A'};
+    l_n.i == {0, 'A'};
+end
+
+end

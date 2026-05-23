@@ -1,26 +1,29 @@
-%% NFPP Physical Plant Builder (Simscape Equivalent)
+%% NFPP Physical Plant Builder (Standalone Cell Focus)
 % Ref: docs/paper.md
+% Updates: Standalone 16S1P pack without external cooling hardware.
 
 function plant = build_physical_plant(params)
-    % This script represents the assembly of the physical battery pack
-    % and its environment using Simscape components.
+    % 1. Grid & PCCS Subsystem
+    plant.pccs.type = 'Power Conversion and Conditioning System';
 
-    plant.cells = cell(16, 1);
-    for i = 1:16
-        plant.cells{i}.type = 'nfpp_cell.ssc';
-        plant.cells{i}.R_int = params.Contact_resistance_Ohm + 0.01;
-        plant.cells{i}.C_th = 500;
+    % 2. Modular Pack Assembly (4 Packs of 4)
+    num_packs = 4;
+    plant.packs = cell(num_packs, 1);
+
+    for p = 1:num_packs
+        plant.packs{p}.id = ['Pack_' num2str(p)];
+        plant.packs{p}.cells = cell(4, 1);
+        for c = 1:4
+            plant.packs{p}.cells{c}.type = 'nfpp_cell.ssc';
+        end
     end
 
-    % Pre-charge Circuit Implementation
-    plant.precharge.R = 10; % Pre-charge resistor [Ohm]
-    plant.precharge.contactor = 'Normally Open';
+    % 3. Enclosure & Environment
+    plant.enclosure.type = 'Standalone NFPP Pack';
+    plant.enclosure.dims = [450, 180, 140];
 
-    % Pack Configuration
-    plant.config = '16S1P';
-    plant.nominal_voltage = 16 * 3.2;
-
-    disp('Simscape Physical Plant Model Built:');
-    disp(['  Configuration: ' plant.config]);
-    disp(['  Main Contactors: Safety-Latched']);
+    disp('Full ESS Digital Twin Built:');
+    disp('  Topology: 16S1P (4 Packs of 4)');
+    disp('  Cooling: Natural/Forced Convection (Hardware-less)');
+    disp('  Enclosure: Aluminum (450x180x140 mm)');
 end

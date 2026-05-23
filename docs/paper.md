@@ -1,4 +1,6 @@
-Methodology
+# Constrained DFN-Based NFPP Sodium-Ion Cell Optimization and Model-Based Battery Management System Design
+
+## Methodology
 
 Base Cell Model (Literature-Aligned NFPP Sodium-Ion Twin System)
 1. Electrochemical Core (DFN-Compatible Reaction)
@@ -42,7 +44,7 @@ Layer stack:
 	Cathode current collector: aluminum foil (~15 micrometers) 
 	Anode current collector: copper foil (~10 micrometers) 
 	Separator: polyolefin trilayer membrane (~20 micrometers) 
-	External casing: aluminum laminated moisture barrier (~30–50 micrometers) 
+	External casing: poly-based moisture barrier (no aluminum laminate)
 	Inner sealant: polypropylene-based sealing layer 
 
 Base Model Validation Framework 
@@ -74,56 +76,37 @@ The structural output is expressed as a reduced endurance response under strain 
 where: n_"crit" = cycles to onset of irreversible deformation, t_"crit" = time to onset under operating profile, ε_"int" = applied or induced strain intensity 
 This defines the deformation endurance boundary of the continuum under coupled electrochemical–thermal loading.
 
-NFPP Cell Optimization 
+### Constrained DFN-Based NFPP Cell Optimization Framework
+Methodological Scope Statement
+This work presents a constrained multiphysics optimization framework for NFPP-based sodium-ion cells, where material variation is restricted to dopant-level and electrolyte (salt/solvent) chemistry, coupled with structural and thermal co-optimization via Differentiable Sensitivity Manifold Optimization (DSMO).
+
 Objective Definition
-A constrained multi-objective optimization is formulated to minimize cost while maximizing electrochemical performance:
-min θ C(θ), max θ {E(θ), P(θ), L(θ)}
-Constraints:  Energy density ≥ 140 Wh/kg, Power capability ≥ 1C, Cycle life ≥ 8000 cycles, N/P ratio ≥ 1.05, Diffusion time ≤ charge time, Effective conductivity ≥ σ_min 
-1. Unified Parameterization (Design Space)
-The design space consists of:
-Structural parameters (θₛ):
-electrode thickness (L_c, L_a), porosity (ε_c, ε_a), tortuosity (τ), active material loading, particle size (r_p)
-Material parameters (θₘ):
-NFPP fraction, conductive carbon fraction, electrolyte composition, additive/doping strategy
-2. Sensitivity-Driven Physics Reduction
-Sensitivity analysis is applied to DFN-derived outputs to identify parameters governing charge–discharge dynamics, electrode–electrolyte coupling, and rate-limiting transport and interfacial behavior.
-2.1 Geometry and Interface Sensitivity (PyBaMM)
-PyBaMM geometry and reaction kinetics modules quantify sensitivity of performance to:
-	electrode thickness, porosity, and loading 
-	charge-transfer resistance and interfacial overpotential 
-	internal structural configuration parameters (e.g., porosity distribution, tortuosity-controlled transport pathways, and binder-network compliance characteristics) that influence strain redistribution and suppress deformation localization under thermal and SOC cycling 
+The cell design is optimized using a hierarchical Material-Structural framework. The primary objective is to discover chemistry modifications (dopants/salts/solvents) compatible with the already-validated NFPP architecture while simultaneously fine-tuning structural parameters. Cost reduction and performance gains are driven by **material production optimization**, focusing on purification, extraction, and supply-chain criticality.
 
-2.2 Hessian-Based Design Space Reduction and Optimal Solution Identification
-Outputs from PyBaMM sensitivity analysis are embedded into a second-order Hessian curvature operator of the DFN performance landscape, extended to include strain-response coupling.
-This step performs simultaneous:
-	coupling resolution across electrochemical, thermal, and mechanical response pathways 
-	constraint sensitivity compression (performance + structural integrity constraints) 
-	curvature-based elimination of weak or non-influential directions in the design space 
-The reduced design space is defined as:
-θ→θ^*⊂θ
+1. Stage A-C: Material Discovery & Compatibility Engine
+This phase identifies chemistry modifications compatible with the existing NFPP/Hard Carbon architecture.
+*   **Electrolyte & Fluorine Reduction:** Discovery of non-fluorinated salts and solvents to reduce environmental burden and cost. Top candidates include:
+    *   **Sodium tetraphenylborate ($NaBPh_4$):** Eco-friendly salt offering significant material cost savings.
+    *   **Sodium bis(oxalato)borate (NaBOB):** High ionic conductivity and stable cycling.
+    *   **Cyanide-based and Hückel-type salts:** (e.g., NaPCPI, NaTCP) providing high conductivity.
+*   **Electrode Doping:** Fe-site doping for cathodes and Na-insertion doping for anodes to improve capacity.
+*   **Constraint Engine:** Rejects candidates violating structural (ionic radius), valence (neutrality), or voltage (|dV| > 0.15V) preservation rules.
+*   **Thermodynamic Screening:** Ensures energy-above-hull $E_{hull} < 50$ meV/atom.
+*   **Multi-Objective Pareto Ranking:** Ranking candidates using the objective vector $J = [E_d, L_c, C, R_c, F, S]$ (Energy Density, Life, Production Cost, Criticality, Fluorine, Safety).
+    *   **Cost & Pricing (USGS):** Uses production and reserve data from USGS Mineral Commodity Summaries.
+    *   **Criticality (IEA):** Integrates IEA Critical Minerals indices and supply-chain rarity heuristics.
 
-The optimal parameter set θ^*is obtained by solving the constrained curvature system defined on the reduced DFN–strain landscape
-2.3. Literature-Constrained Material Feasibility (Electrolyte and Additive Closure)
-A literature-guided feasibility filter is applied:
-	candidate electrolyte systems and additives are retrieved from DFN-consistent experimental literature 
-	filtering is applied using: 
-	electrochemical stability window compatibility 
-	interfacial film stability (SEI / CEI formation consistency) 
-	ionic transport and conductivity constraints 
-	interfacial strain accommodation capability under thermo-mechanical cycling (compatibility with deformation suppression requirements identified in θ^*) 
-This produces a feasible material set conditioned on θ^*, ensuring consistency across electrochemical performance and structural deformation resilience.
-3. Cost-Driven Feasibility Adjustment 
-cost acts as a correction operator on the coupled solution space obtained from 2
-The preliminary optimal solution (θ*) is adjusted under cost influence:
-	material–structure pairs are modified jointly (not independently) 
-	adjustments preserve DFN feasibility constraints 
-	cost acts as a perturbation field over the admissible solution manifold 
-This yields a cost-corrected feasible solution set:
-θ* → θ_c*
-where:
-	improvements in cost are bounded and typically near-zero or negative relative to baseline 
-	any cost increase is constrained to negligible manufacturing tolerance levels 
-	electrochemical feasibility is preserved throughout adjustment 
+2. Stage D: Electrochemical Projection Layer
+Selected material modifications are projected onto the validated DFN parameter set as perturbations:
+$\theta' = \theta_{base} (1 + \Delta \theta_{material})$
+This ensures DFN simulation validity by maintaining compatibility with the calibrated baseline.
+
+3. Stage E-F: Differentiable Sensitivity Manifold Optimizer (DSMO)
+The projected design space is optimized using a coupled multiphysics operator $y = F(\theta)$.
+*   **Electrochemical/Thermal (PyBaMM):** DFN system with CasADi backend for exact sensitivity extraction.
+*   **Mechanical (FEniCSx):** Adjoint linearized FEM sensitivities ($S_{mech}$) modeling thermoelastic and intercalation strain.
+*   **Update Rule:** Gauss–Newton (Levenberg-Marquardt) update on the sensitivity manifold:
+    $\theta_{k+1} = \theta_k - \eta (S^T S + \lambda I)^{-1} S^T (y - y_{target})$
 5. Stability Validation (Physics Consistency Check)
 The final optimized configuration is validated using a coupled reduced-order physics framework with PyBaMM, evaluating electrochemical and thermal behavior under full operating stress conditions.
 The model tracks SOC during discharge operation and HOC evolution alongside thermal PDE response under peak current loading and transient demand profiles.
@@ -134,53 +117,71 @@ Metric	Baseline	Optimized
 Energy density	140 Wh/kg	155–165 Wh/kg
 Cycle life	5000	8000–9000
 		
-BMS Design
-System Overview
-The Battery Management System (BMS) is designed as a model-based, constraint-driven control system for sodium-ion ESS operation under unstable grid conditions. 
-Pack Model 
-Electrical Specification Cell Configuration 16S1P
-Thermal Management Architecture
-Thermal regulation is achieved using a hybrid passive cooling system combining phase-change material (PCM) for transient heat absorption and fin-based heat dissipation for continuous thermal rejection. The system is integrated at the pack level to mitigate transient heat accumulation during high C-rate operation and grid-induced load fluctuations
+ESS Unit Model: Multiphysics Digital Twin
+The ESS is implemented as a high-fidelity digital twin coupling electrochemical, thermal, fluid, and mechanical domains.
 
-SIMULINK BMS CONTROL SYSTEM MODEL
-The ESS is a constrained nonlinear plant:▭(P_cell={SOC,V_1,V_2,T,SOH,R_0^eff})
+1. PHYSICAL PLANT MODEL
+The plant model represents the physical hardware of the 16S1P sodium-ion battery pack and its associated infrastructure.
 
-Control is applied through current: u=I_cmd
+1.1 Cell Configuration & Packaging
+*   **Topology:** 16S1P (48V nominal, 10Ah) organized into four 4-cell packs.
+*   **Heterogeneity:** Stochastic parameter variation ($\pm 2-5\%$ capacity, $\pm 1-3\%$ resistance) to model real-world manufacturing spread.
+*   **Casing:** Poly-material moisture barrier (aluminum-free) with no secondary coating.
+*   **Coating Thickness:** Specified at 50–150 $\mu$m, governing internal thermal conductance.
+*   **Internal Dynamics:** Core-casing distributed thermal nodes with DFN-informed concentration states ($c_s, c_e$) and 2-RC polarization branches.
 
-2. CELLS (PHYSICAL PLANT)
-State vector
-x=[█(SOC@V_1@V_2@T@SOH)]
+1.2 Thermal Management
+The cell plant utilizes passive and active air-side convection for thermal management. The thermal behavior is governed by the state-space relation:
+$C\dot{T} = KT + Q_{gen} - Q_{conv}$
 
-Dynamics: SOC evolution (pure state, not controlled) dSOC/dt=-I/(Q_n^eff )
-Electrical dynamics
-V_t=OCV(SOC)-IR_0^eff-V_1-V_2
-V ̇_1=-V_1/(R_1 C_1 )+I/C_1 ,V ̇_2=-V_2/(R_2 C_2 )+I/C_2 
-Thermal dynamics C_th T ̇=I^2 R_0^eff-hA(T-T_amb)
-SOH evolution (aging state) (SOH) ̇=-f(I,T,SOC)
+**Thermal Node Topology:**
+*   Cell Core (heat source) → Cell Casing (poly) → Ambient (convection).
 
-3. C-RATE CONTROLLER (PRIMARY CONTROL BLOCK)
- Control objective C=I/Q_n 
-Track power request while respecting constraints: I_cmd=C_ref⋅Q_n
+1.3 Power Conversion and Conditioning System
+The interface layer regulates bidirectional energy flow and grid stability.
+*   **Topology:** AC Grid → STS → PQC → Active Rectifier → DC Link → Bidirectional DC/DC.
+*   **Grid Interface:** Static Transfer Switch (STS) for <4ms grid/island transition.
+*   **PQC:** Series-injected DVR-equivalent sag compensator for voltage sag/swell mitigation.
+*   **Conversion:** Bidirectional isolated buck-boost stage with integrated PWM and LC filtering.
+*   **Monitoring:** SRF-PLL for real-time Frequency and ROCOF estimation.
 
-Constraint-limited control law I_cmd="sat"(I_ref,I_min (SOC,SOH),I_max (T,SOH))
+1.4 Interconnects, Sensors & Faults
+*   **Busbars:** Nickel-plated copper with $I^2R$ Joule heating modeling.
+*   **Sensors:** 16-bit voltage ADCs (<2mV noise), NTC thermistors (every 2 cells), and Hall-effect current sensors.
+*   **Fault Injection:** Hooks for internal shorts, sensor drift, and converter efficiency drops.
 
+1.5 ESS Unit Physical Dimensions
+The integrated ESS unit, housing the 16S1P pack and the power conversion system, is designed with the following external dimensions:
+*   **Height:** 450 mm (includes cell stack, air draft spacing, and top-mounted PCCS).
+*   **Length:** 180 mm (aligned with 130 mm cell length plus manifold clearances).
+*   **Width:** 140 mm (aligned with 70 mm cell width plus enclosure thickness).
 
-4. CELL EQUALIZER CONTROLLER (FOR PACK)
-Objective: Minimize SOC dispersion, min⁡∑_i▒〖(SO〗 C_i-(SOC) ˉ)^2
-Equalization law
-For cell i I_(eq,i)=k(SOC_i-(SOC) ˉ)
-Control mechanism
-Two implementations:
-(A) Passive balancing: resistor bleed, no active energy transfer 
-(B) Active balancing; DC/DC shuttle between cells, controlled switching network 
+2. Model-Based Battery Management System Design (Core Research Contribution)
+The BMS is designed as a high-fidelity algorithmic layer that manages the cell plant through state estimation, protection, and safety-enforced control.
 
-5. THERMAL LIMITER (SECONDARY CONTROL)
-a constraint scaler I_cmd^th=I_cmd⋅e^(-λ(T-T_safe )^+ )
-Hard cutoff: T>85^∘ C⇒I=0
+**2.1 State Estimation Layer**
+The BMS implements real-time estimation of non-measurable internal states:
+*   **SOC Estimation (EKF):** An Extended Kalman Filter utilizes a nonlinear OCV-SOC mapping and a 2-RC equivalent circuit model to track charge levels across the 16-cell string.
+*   **SOH Inference (RLS):** Recursive Least Squares (RLS) algorithms identify internal resistance growth ($R_0$ drift) to estimate capacity fade and power degradation.
+*   **Temperature Inference:** Distributed sensing combined with a lumped thermal observer provides core temperature estimates where direct sensing is unavailable.
 
-6. GRID STRESS DERATING BLOCK
-Pure supervisory constraint modifier.
-Stress metric D_k=α∣ΔV∣+β∣Δf∣+γB
-Current scaling I_cmd^grid=I_cmd e^(-μD_k )
+**2.2 Protection & Diagnostic Layer**
+Core safety logic monitors and mitigates hazardous conditions:
+*   **Voltage Protection:** Hard-coded thresholds for over-voltage (OV) and under-voltage (UV) to prevent lithium/sodium plating and electrolyte decomposition.
+*   **Thermal Protection:** Over-temperature (OT) shutdown logic triggered if any cell core exceeds the $T_{max}$ envelope.
+*   **Impedance Diagnostics:** Detection of abnormal impedance rise or sudden voltage drops indicating internal shorts or catastrophic degradation.
 
-All constraints collapse into current arbitration: ▭(I=min⁡(I_(C-rate),I_thermal,I_grid,I_SOH))
+**2.3 Safety Enforcement & Current Arbitration**
+The BMS regulates the current command ($I_{cmd}$) to maintain the pack within the Safe Operating Area (SOA):
+*   **Thermal Derating:** Exponential current limiting as cell temperatures approach the safe limit ($T_{limit}$).
+*   **SOC Boundary Derating:** Smooth current tapering at high/low SOC to prevent accidental threshold violations.
+*   **Internal Arbitration:** The final current command is a function of the user request and the most restrictive safety constraint: $I_{cmd} = f(I_{req}, SOC, T, SOH)$.
+
+**2.4 Control & Balancing Layer**
+*   **State Machine:** Deterministic management of Standby, Precharge, Run, and Fault states.
+*   **Cell Equalization:** SOC-based passive balancing using bleed resistors to minimize cell-to-cell dispersion during idle periods or low-current operation.
+
+3. RESEARCH SCOPE DECOMPOSITION
+This research maintains a clean separation between the physical plant and the control algorithms:
+*   **Fixed Plant Model:** The NFPP Cell (DFN-informed electro-thermal proxy) is treated as the static environment.
+*   **Variable BMS Layer:** The core contribution lies in the design, stability, and robustness of the estimation and protection algorithms described above.
