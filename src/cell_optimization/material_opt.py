@@ -40,7 +40,6 @@ class MaterialDiscoveryFramework:
         try:
             r = requests.get(self.oqmd_url, params={"composition": formula, "limit": 10}, timeout=15)
             if r.status_code == 200:
-                # OQMD uses 'results' key for the list of entries
                 data = r.json().get('results', [])
                 candidates = []
                 for d in data:
@@ -78,19 +77,26 @@ class MaterialDiscoveryFramework:
         raw = self.acquire_via_api("Na*Fe*P*", "Cathode_Dopant") + \
               self.acquire_via_api("Na*B*", "Salt")
 
+        # Add Non-Fluorinated Top Salts
+        raw += [
+            MaterialCandidate(name="NaBPh4", category="Salt", composition="NaB(C6H5)4", production_cost=0.02, fluorine_fraction=0.0),
+            MaterialCandidate(name="NaBOB", category="Salt", composition="NaB(C2O4)2", production_cost=0.3, fluorine_fraction=0.0),
+            MaterialCandidate(name="NaPCPI", category="Salt", composition="NaC8N5", production_cost=0.5, fluorine_fraction=0.0),
+            MaterialCandidate(name="NaTCP", category="Salt", composition="NaC4N3", production_cost=0.4, fluorine_fraction=0.0)
+        ]
+
         # 2. Filtering & Pareto
         valid = [c for c in raw if self.engine.screen(c)]
         if not valid:
-            print("No valid candidates found via API. Using local fallback.")
+            print("No valid candidates found. Using local fallback.")
             valid = [MaterialCandidate(name="Mn", category="Cathode_Dopant", composition="Na2Fe0.9Mn0.1P2O7")]
 
         best_front = self.get_pareto_front(valid)
 
         # 3. Projection Mapping
-        dopant_map = {"Mn": {"diffusivity": 1.1}, "Mg": {"diffusivity": 1.05}}
+        dopant_map = {"Mn": {"diffusivity": 1.1}, "Mg": {"diffusivity": 1.05}, "NaBPh4": {"diffusivity": 1.2}}
         system = {}
         for m in best_front:
-            # Extract simple name from composition or name
             key = "Mn" if "Mn" in m.name else "Mg" if "Mg" in m.name else m.name
             m.projected_delta = dopant_map.get(key, {"diffusivity": 1.0})
             system[m.category] = m

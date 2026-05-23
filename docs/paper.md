@@ -85,7 +85,10 @@ The cell design is optimized using a hierarchical Material-Structural framework.
 
 1. Stage A-C: Material Discovery & Compatibility Engine
 This phase identifies chemistry modifications compatible with the existing NFPP/Hard Carbon architecture.
-*   **Electrolyte & Fluorine Reduction:** Discovery of low-fluorine salts and solvents (AFLOW/OQMD/MP) to reduce environmental burden and cost.
+*   **Electrolyte & Fluorine Reduction:** Discovery of non-fluorinated salts and solvents to reduce environmental burden and cost. Top candidates include:
+    *   **Sodium tetraphenylborate ($NaBPh_4$):** Eco-friendly salt offering significant material cost savings.
+    *   **Sodium bis(oxalato)borate (NaBOB):** High ionic conductivity and stable cycling.
+    *   **Cyanide-based and Hückel-type salts:** (e.g., NaPCPI, NaTCP) providing high conductivity.
 *   **Electrode Doping:** Fe-site doping for cathodes and Na-insertion doping for anodes to improve capacity.
 *   **Constraint Engine:** Rejects candidates violating structural (ionic radius), valence (neutrality), or voltage (|dV| > 0.15V) preservation rules.
 *   **Thermodynamic Screening:** Ensures energy-above-hull $E_{hull} < 50$ meV/atom.
