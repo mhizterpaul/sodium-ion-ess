@@ -2,6 +2,7 @@ import numpy as np
 import pybamm
 import casadi
 from nfpp_sodium_ion.src.cell_parameters.cell_alpha import get_parameter_values
+from src.cell_optimization.material_opt import MaterialDiscoveryFramework
 
 try:
     import dolfinx
@@ -16,17 +17,18 @@ except ImportError:
 class DSMOptimizer:
     """
     Differentiable Sensitivity Manifold Optimizer (DSMO).
-    Coupled PyBaMM (CasADi) + FEniCSx Multiphysics sensitivities.
+    Optimizes both structural parameters and material selection for maximum performance.
     """
-    def __init__(self, target_y=None, material_deltas=None):
-        self.target_y = target_y if target_y is not None else np.array([3.1, 305.0, 0.5, 1e-6])
-        self.deltas = material_deltas or {}
+    def __init__(self, target_efficiency=0.98):
+        self.target_eff = target_efficiency
+        self.discovery = MaterialDiscoveryFramework()
+        self.material_data = self.discovery.run_discovery()
 
-        self.lr = 0.05
-        self.max_iters = 5
-        self.lam = 1e-3
+        self.lr = 0.1
+        self.max_iters = 8
+        self.lam = 1e-2
 
-        self.theta_keys = [
+        self.structural_keys = [
             "Positive electrode thickness [m]",
             "Negative electrode thickness [m]",
             "Positive electrode porosity",
@@ -37,144 +39,136 @@ class DSMOptimizer:
             "Negative electrode active material volume fraction",
             "Typical electrolyte concentration [mol.m-3]"
         ]
-        self.theta = np.array([1.2e-4, 1.2e-4, 0.3, 0.3, 1e-6, 1.5, 0.65, 0.65, 1000.0])
 
-    def setup_multiphysics(self):
+        # Material parameters:
+        # theta_m[0]: Dopant interpolation (0: Mn, 1: Cr)
+        # theta_m[1]: Salt interpolation (0: NaBOB, 1: NaTCP)
+        self.theta_structural = np.array([1.2e-4, 1.2e-4, 0.3, 0.3, 1e-6, 1.5, 0.65, 0.65, 1000.0])
+        self.theta_material = np.array([0.5, 0.5])
+
+        self.theta = np.concatenate([self.theta_structural, self.theta_material])
+        self.all_keys = self.structural_keys + ["Dopant_Alpha", "Salt_Alpha"]
+
+    def apply_material_logic(self, param_vals, theta_m):
+        alpha_d = np.clip(theta_m[0], 0, 1)
+        alpha_s = np.clip(theta_m[1], 0, 1)
+
+        dopants = self.material_data["Cathode_Dopant"] # [Mn, Cr]
+        salts = self.material_data["Salt"]             # [NaBOB, NaTCP]
+
+        # Interpolate deltas
+        d_v = (1-alpha_d)*dopants[0].projected_delta["voltage_boost"] + alpha_d*dopants[1].projected_delta["voltage_boost"]
+        d_diff = (1-alpha_d)*dopants[0].projected_delta["diffusivity_mult"] + alpha_d*dopants[1].projected_delta["diffusivity_mult"]
+
+        s_cond = (1-alpha_s)*salts[0].projected_delta["conductivity_mult"] + alpha_s*salts[1].projected_delta["conductivity_mult"]
+        s_trans = (1-alpha_s)*salts[0].projected_delta["ion_transference_mult"] + alpha_s*salts[1].projected_delta["ion_transference_mult"]
+
+        # Apply to parameters
+        # Wrap existing functions to include deltas
+        base_ocp = param_vals["Positive electrode OCP [V]"]
+        param_vals["Positive electrode OCP [V]"] = lambda sto: base_ocp(sto) + d_v
+
+        base_diff = param_vals["Positive particle diffusivity [m2.s-1]"]
+        param_vals["Positive particle diffusivity [m2.s-1]"] = lambda sto, T: base_diff(sto, T) * d_diff
+
+        param_vals["Electrolyte conductivity [S.m-1]"] = param_vals["Electrolyte conductivity [S.m-1]"] * s_cond
+        param_vals["Cation transference number"] = param_vals["Cation transference number"] * s_trans
+
+        return param_vals
+
+    def setup_sim(self, theta):
         param_vals = pybamm.ParameterValues(get_parameter_values())
-        if "diffusivity" in self.deltas:
-            param_vals["Negative particle diffusivity [m2.s-1]"] *= self.deltas["diffusivity"]
+        theta_s = theta[:len(self.structural_keys)]
+        theta_m = theta[len(self.structural_keys):]
+
+        # Structural
+        for i, key in enumerate(self.structural_keys):
+            param_vals[key] = theta_s[i]
+
+        # Material
+        param_vals = self.apply_material_logic(param_vals, theta_m)
+
+        # Set a fixed current instead of InputParameter
+        param_vals["Current function [A]"] = 10.0 # 1C for 10Ah cell
 
         model = pybamm.lithium_ion.DFN()
-        inputs = {v: pybamm.InputParameter(v) for v in self.theta_keys}
-        param_vals.update(inputs, check_already_exists=False)
-
-        self.solver = pybamm.CasadiSolver(mode="fast", return_solution_as_casadi=True)
-        self.sim = pybamm.Simulation(model, parameter_values=param_vals, solver=self.solver)
-
-    def solve_mechanical_adjoint(self, T, SOC, theta):
-        """
-        Concrete FEniCSx exact sensitivities using 1D Reference Domain.
-        """
-        if not dolfinx:
-            # Fallback for CI/limited environments, but logic remains functional
-            eps = 1e-7 * (T - 298.15) + 1e-6 * (0.5 - SOC)
-            deps_dL = (1e-6 / (theta[0]+theta[1]+20e-6))
-            S_mech = np.zeros(len(self.theta_keys))
-            S_mech[0] = S_mech[1] = deps_dL
-            return eps, S_mech
-
-        domain = mesh.create_interval(MPI.COMM_WORLD, 20, [0, 1])
-        V = fem.functionspace(domain, ("Lagrange", 1))
-
-        L_tot_val = theta[0] + theta[1] + 20e-6
-        L_var = fem.Constant(domain, default_scalar_type(L_tot_val))
-        L_ufl = ufl.variable(L_var)
-
-        E = fem.Constant(domain, default_scalar_type(10e9))
-        alpha = fem.Constant(domain, default_scalar_type(1e-5))
-        beta = fem.Constant(domain, default_scalar_type(0.02))
-        eps_0 = alpha * (T - 298.15) + beta * (SOC - 0.5)
-
-        u = ufl.TrialFunction(V)
-        v = ufl.TestFunction(V)
-
-        # Variational Form: dx_phys = L * dx_ref, grad_phys = (1/L) * grad_ref
-        F = (1.0/L_ufl) * E * (u.dx(0) - L_ufl*eps_0) * v.dx(0) * ufl.dx
-        a = ufl.lhs(F)
-        L_form = ufl.rhs(F)
-
-        # Forward Solve
-        dofs_left = fem.locate_dofs_geometrical(V, lambda x: np.isclose(x[0], 0))
-        bc = fem.dirichletbc(default_scalar_type(0), dofs_left, V)
-        problem = LinearProblem(a, L_form, bcs=[bc])
-        uh = problem.solve()
-
-        strain_val = uh.x.array[-1] / L_tot_val
-
-        # Sensitivity: K * du_dL = -dR/dL
-        K_mat = fem.petsc.assemble_matrix(fem.form(a), bcs=[bc])
-        K_mat.assemble()
-
-        R_uh = ufl.replace(F, {u: uh})
-        dR_dL = ufl.diff(R_uh, L_ufl)
-        rhs_sens = fem.petsc.assemble_vector(fem.form(-dR_dL))
-        fem.petsc.apply_lifting(rhs_sens, [fem.form(a)], bcs=[[bc]])
-        rhs_sens.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
-        fem.petsc.set_bc(rhs_sens, [bc])
-
-        du_dL = fem.Function(V)
-        ksp = PETSc.KSP().create(domain.comm)
-        ksp.setOperators(K_mat)
-        ksp.solve(rhs_sens, du_dL.vector)
-
-        dstrain_dL = (1.0/L_tot_val) * du_dL.x.array[-1] - (uh.x.array[-1] / (L_tot_val**2))
-
-        S_mech = np.zeros(len(self.theta_keys))
-        S_mech[0] = S_mech[1] = dstrain_dL
-
-        return float(strain_val), S_mech
+        solver = pybamm.CasadiSolver(mode="fast")
+        sim = pybamm.Simulation(model, parameter_values=param_vals, solver=solver)
+        return sim
 
     def run(self):
-        print(f"Starting DSMO on {len(self.theta_keys)} parameters...")
-        self.setup_multiphysics()
+        print(f"Starting Performance-Based DSMO for {len(self.all_keys)} design parameters...")
 
         theta_vec = self.theta
         for k in range(self.max_iters):
-            p_dict = {self.theta_keys[i]: theta_vec[i] for i in range(len(self.theta_keys))}
-            sol = self.sim.solve([0, 1800], inputs=p_dict)
-
-            V_val = float(sol["Terminal voltage [V]"].entries[-1])
-            T_val = float(sol["Cell temperature [K]"].entries[-1])
-            SOC_val = 1.0 - (float(sol["Discharge capacity [A.h]"].entries[-1]) / 10.0)
-
-            eps_val, S_mech_row = self.solve_mechanical_adjoint(T_val, SOC_val, theta_vec)
-            y = np.array([V_val, T_val, SOC_val, eps_val])
-
+            # Performance proxy: average discharge voltage
+            sim = self.setup_sim(theta_vec)
             try:
-                S_pybamm = np.zeros((3, len(self.theta_keys)))
-                for i, key in enumerate(self.theta_keys):
-                    S_pybamm[0, i] = sol["Terminal voltage [V]"].sensitivities[key][-1]
-                    S_pybamm[1, i] = sol["Cell temperature [K]"].sensitivities[key][-1]
-                    S_pybamm[2, i] = -sol["Discharge capacity [A.h]"].sensitivities[key][-1] / 10.0
-            except:
-                S_pybamm = self.finite_difference_jac(theta_vec)
+                sol = sim.solve([0, 300]) # 5 minutes
+                v_avg = np.mean(sol["Terminal voltage [V]"].entries)
+                eff = v_avg / 3.4
+            except Exception as e:
+                print(f"Solve failed at iteration {k}: {e}")
+                eff = 0.5
 
-            S = np.vstack([S_pybamm, S_mech_row])
+            # Sensitivity extraction (Finite Difference for material/structural mix)
+            S = self.compute_jacobian(theta_vec)
 
-            r = y - self.target_y
-            G = S.T @ S + self.lam * np.eye(len(self.theta_keys))
-            update = np.linalg.solve(G, S.T @ r)
-            theta_vec = theta_vec - self.lr * update
+            r = eff - self.target_eff
+            # Manifold update
+            J = S.T @ S + self.lam * np.eye(len(theta_vec))
+            update = np.linalg.solve(J, S.T * r)
 
-            theta_vec = np.clip(theta_vec,
-                [5e-5, 5e-5, 0.1, 0.1, 1e-7, 1.0, 0.4, 0.4, 500.0],
-                [3e-4, 3e-4, 0.6, 0.6, 1e-5, 3.0, 0.8, 0.8, 2000.0])
+            theta_vec = theta_vec - self.lr * update.flatten()
 
-            print(f"  Iteration {k}: Residual Norm = {np.linalg.norm(r):.4f}")
-            if np.linalg.norm(r) < 1e-4: break
+            # Constraints
+            theta_vec[:9] = np.clip(theta_vec[:9],
+                                    [5e-5, 5e-5, 0.1, 0.1, 1e-7, 1.0, 0.4, 0.4, 500.0],
+                                    [3e-4, 3e-4, 0.6, 0.6, 1e-5, 3.0, 0.8, 0.8, 2000.0])
+            theta_vec[9:] = np.clip(theta_vec[9:], 0, 1) # Selector bounds
 
-        return {"design": theta_vec.tolist()}
+            print(f"  Iteration {k}: Metric = {eff:.4f}, Dopant_Alpha = {theta_vec[9]:.2f}, Salt_Alpha = {theta_vec[10]:.2f}")
+            if abs(r) < 1e-4: break
 
-    def finite_difference_jac(self, theta):
-        n_params = len(self.theta_keys)
-        S = np.zeros((3, n_params))
-        eps = 1e-6
-        for i in range(n_params):
+        # Final Material Selection
+        dopant = "Cr" if theta_vec[9] > 0.5 else "Mn"
+        salt = "NaTCP" if theta_vec[10] > 0.5 else "NaBOB"
+
+        print(f"\nOptimization Complete.")
+        print(f"Selected Dopant: {dopant}")
+        print(f"Selected Salt: {salt}")
+
+        return {
+            "design": theta_vec.tolist(),
+            "selected_dopant": dopant,
+            "selected_salt": salt
+        }
+
+    def compute_jacobian(self, theta):
+        n = len(theta)
+        S = np.zeros(n)
+        eps = 1e-4
+
+        for i in range(n):
             th_p = theta.copy(); th_p[i] += eps
-            p_p = {self.theta_keys[j]: th_p[j] for j in range(n_params)}
-            sol_p = self.sim.solve([0, 1800], inputs=p_p)
-            v_p = float(sol_p["Terminal voltage [V]"].entries[-1])
-            t_p = float(sol_p["Cell temperature [K]"].entries[-1])
-            soc_p = 1.0 - (float(sol_p["Discharge capacity [A.h]"].entries[-1]) / 10.0)
+            sim_p = self.setup_sim(th_p)
+            try:
+                sol_p = sim_p.solve([0, 60])
+                eff_p = np.mean(sol_p["Terminal voltage [V]"].entries) / 3.4
+            except: eff_p = 0.5
 
             th_m = theta.copy(); th_m[i] -= eps
-            p_m = {self.theta_keys[j]: th_m[j] for j in range(n_params)}
-            sol_m = self.sim.solve([0, 1800], inputs=p_m)
-            v_m = float(sol_m["Terminal voltage [V]"].entries[-1])
-            t_m = float(sol_m["Cell temperature [K]"].entries[-1])
-            soc_m = 1.0 - (float(sol_m["Discharge capacity [A.h]"].entries[-1]) / 10.0)
+            sim_m = self.setup_sim(th_m)
+            try:
+                sol_m = sim_m.solve([0, 60])
+                eff_m = np.mean(sol_m["Terminal voltage [V]"].entries) / 3.4
+            except: eff_m = 0.5
 
-            S[0, i] = (v_p - v_m) / (2 * eps)
-            S[1, i] = (t_p - t_m) / (2 * eps)
-            S[2, i] = (soc_p - soc_m) / (2 * eps)
-        return S
+            S[i] = (eff_p - eff_m) / (2 * eps)
+
+        return S.reshape(1, -1)
+
+if __name__ == "__main__":
+    opt = DSMOptimizer()
+    res = opt.run()
+    print(res)

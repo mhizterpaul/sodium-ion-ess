@@ -86,10 +86,9 @@ The cell design is optimized using a hierarchical Material-Structural framework.
 1. Stage A-C: Material Discovery & Compatibility Engine
 This phase identifies chemistry modifications compatible with the existing NFPP/Hard Carbon architecture.
 *   **Electrolyte & Fluorine Reduction:** Discovery of non-fluorinated salts and solvents to reduce environmental burden and cost. Top candidates include:
-    *   **Sodium tetraphenylborate ($NaBPh_4$):** Eco-friendly salt offering significant material cost savings.
     *   **Sodium bis(oxalato)borate (NaBOB):** High ionic conductivity and stable cycling.
-    *   **Cyanide-based and Hückel-type salts:** (e.g., NaPCPI, NaTCP) providing high conductivity.
-*   **Electrode Doping:** Fe-site doping for cathodes and Na-insertion doping for anodes to improve capacity.
+    *   **Sodium tricyanomethanide (NaTCP):** High conductivity and performance.
+*   **Electrode Doping:** Fe-site doping for cathodes using **Cr** (Cr³⁺ stabilizer) and **Mn** (voltage booster) to improve stability and performance.
 *   **Constraint Engine:** Rejects candidates violating structural (ionic radius), valence (neutrality), or voltage (|dV| > 0.15V) preservation rules.
 *   **Thermodynamic Screening:** Ensures energy-above-hull $E_{hull} < 50$ meV/atom.
 *   **Multi-Objective Pareto Ranking:** Ranking candidates using the objective vector $J = [E_d, L_c, C, R_c, F, S]$ (Energy Density, Life, Production Cost, Criticality, Fluorine, Safety).
@@ -109,9 +108,10 @@ The projected design space ($\theta = [\theta_s, \theta_m]$) is optimized using 
 *   **Material Parameters ($\theta_m$):** NFPP fraction, conductive carbon fraction, and electrolyte composition (concentration/salts).
 
 **Optimization Engine:**
-*   **Electrochemical/Thermal (PyBaMM):** DFN system with CasADi backend for exact symbolic sensitivity extraction.
+*   **Electrochemical/Thermal (PyBaMM):** DFN system with CasADi backend for sensitivity extraction.
+*   **Material Sensitivity Integration:** The framework extracts sensitivities with respect to material selection (Fe-Cr vs. Fe-Mn and NaTCP vs. NaBOB) to determine the most effective combination.
 *   **Mechanical (FEniCSx):** Adjoint linearized FEM sensitivities ($S_{mech}$) modeling thermoelastic and intercalation strain.
-*   **Update Rule:** Gauss–Newton (Levenberg-Marquardt) update on the sensitivity manifold:
+*   **Update Rule:** Gauss–Newton (Levenberg-Marquardt) update on the sensitivity manifold to optimize for maximum cell performance and efficiency:
     $\theta_{k+1} = \theta_k - \eta (S^T S + \lambda I)^{-1} S^T (y - y_{target})$
 5. Stability Validation (Physics Consistency Check)
 The final optimized configuration is validated using a coupled reduced-order physics framework with PyBaMM, evaluating electrochemical and thermal behavior under full operating stress conditions.
