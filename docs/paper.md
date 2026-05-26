@@ -76,9 +76,9 @@ The structural output is expressed as a reduced endurance response under strain 
 where: n_"crit" = cycles to onset of irreversible deformation, t_"crit" = time to onset under operating profile, ε_"int" = applied or induced strain intensity 
 This defines the deformation endurance boundary of the continuum under coupled electrochemical–thermal loading.
 
-### Constrained DFN-Based NFPP Cell Optimization Framework
+### DFN-Based NFPP Cell Optimization Framework
 Methodological Scope Statement
-This work presents a constrained multiphysics optimization framework for NFPP-based sodium-ion cells, where material variation is restricted to dopant-level and electrolyte (salt/solvent) chemistry, coupled with structural and thermal co-optimization via Differentiable Sensitivity Manifold Optimization (DSMO).
+This work presents a multiphysics optimization framework for NFPP-based sodium-ion cells, where material variation is restricted to dopant-level and electrolyte (salt/solvent) chemistry, coupled with structural and thermal co-optimization via Differentiable Sensitivity Manifold Optimization (DSMO).
 
 Objective Definition
 The cell design is optimized using a hierarchical Material-Structural framework. The primary objective is to discover chemistry modifications (dopants/salts/solvents) compatible with the already-validated NFPP architecture while simultaneously fine-tuning structural parameters. Cost reduction and performance gains are driven by **material production optimization**, focusing on purification, extraction, and supply-chain criticality.
@@ -98,11 +98,11 @@ This ensures DFN simulation validity by maintaining compatibility with the calib
 3. Stage E-F: Differentiable Sensitivity Manifold Optimizer (DSMO)
 The projected design space ($\theta = [\theta_s, \theta_m]$) is optimized using a coupled multiphysics operator $y = F(\theta)$.
 
-**Design Space and the various material-level optimization strategies discussed herein.**
+**Design Space and perturbing other dopant sites (beyond the Fe-site) and exploring a broader range of electrolyte systems (solvents and additives) to further enhance cycle life and energy density.**
 The framework utilizes a Gauss–Newton (Levenberg-Marquardt) update on the sensitivity manifold to determine the optimal configuration:
     $\theta_{k+1} = \theta_k - \eta (S^T S + \lambda I)^{-1} S^T (y - y_{target})$
 5. Stability Validation (Physics Consistency Check)
-The final optimized configuration is validated through a coupled multiphysics framework in PyBaMM, assessing the electrochemical and thermal response under representative operating profiles. While this work focuses on a foundational design space, the cell architecture remains amenable to further performance enhancement via composite electrode structuring, advanced pore network engineering, and the various material-level optimization strategies discussed herein. The current optimization scope is intentionally streamlined to accommodate the computational constraints of the DFN solver while effectively demonstrating the viability of physics-based optimization for enhancing the cost-efficiency and performance of sodium-ion energy storage systems.
+The final optimized configuration is validated through a coupled multiphysics framework in PyBaMM, assessing the electrochemical and thermal response under representative operating profiles. While this work focuses on a foundational design space, the cell architecture remains amenable to further performance enhancement via composite electrode structuring, advanced pore network engineering, and perturbing other dopant sites (beyond the Fe-site) and exploring a broader range of electrolyte systems (solvents and additives) to further enhance cycle life and energy density. The current optimization scope is intentionally streamlined to accommodate the computational constraints of the DFN solver while effectively demonstrating the viability of physics-based optimization for enhancing the cost-efficiency and performance of sodium-ion energy storage systems.
 Computed cell-level performance metrics include:  Energy capacity (kWh), Nominal voltage (V), Continuous current (A), Peak current (A), Charge time (h or min under rated C-rate), Power capability (kW or C-rate equivalent), Cycle life (cycles to end-of-life under defined SOH threshold) 
 
 6. Expected Outcome
