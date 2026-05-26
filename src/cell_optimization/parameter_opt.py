@@ -47,7 +47,7 @@ class DSMOptimizer:
         self.theta_structural = np.array([1.2e-4, 1.2e-4, 0.3, 0.3, 0.5, 1e-6, 1.5, 0.65, 0.65, 1000.0])
         # Material parameters (continuous selectors)
         # theta_m: [Dopant, Salt, MTMS_Alpha]
-        self.theta_material = np.array([0.5, 0.5, 1.0]) # MTMS enabled by default
+        self.theta_material = np.array([0.5, 0.5, 1.0])
 
         self.theta = np.concatenate([self.theta_structural, self.theta_material])
         self.all_keys = self.structural_keys + ["Dopant_Alpha", "Salt_Alpha", "MTMS_Alpha"]
@@ -68,9 +68,17 @@ class DSMOptimizer:
         s_trans = (1-alpha_s)*salts[0].projected_delta.get("ion_transference_mult", 1) + alpha_s*salts[1].projected_delta.get("ion_transference_mult", 1)
 
         # 2. MTMS effects (Alkyl silane functionalization)
+        # Slower SEI growth: multiplier < 1.0
         f_sei = 1.0 + alpha_f * (mtms.projected_delta.get("sei_growth_mult", 1.0) - 1.0)
-        f_loss = 1.0 + alpha_f * (mtms.projected_delta.get("initial_loss_mult", 1.0) - 1.0)
+        # Reduced initial loss: multiplier > 1.0 on initial concentration
+        loss_reduction = 1.0 - mtms.projected_delta.get("initial_loss_mult", 1.0)
+        f_loss = 1.0 + alpha_f * (loss_reduction * 0.1) # 10% base loss assumption
+
+        # Improved exchange current: multiplier > 1.0
         f_exc = 1.0 + alpha_f * (mtms.projected_delta.get("exchange_current_mult", 1.0) - 1.0)
+
+        # Slower interfacial resistance growth: lower SEI resistivity multiplier
+        f_res = 1.0 + alpha_f * (mtms.projected_delta.get("resistance_drift_mult", 1.0) - 1.0)
 
         # Apply to parameters
         base_ocp = param_vals["Positive electrode OCP [V]"]
@@ -84,10 +92,11 @@ class DSMOptimizer:
 
         # MTMS modifications
         param_vals["SEI reaction exchange current density [A.m-2]"] *= f_sei
+        param_vals["SEI resistivity [Ohm.m]"] *= f_res
+
         param_vals["Negative electrode exchange-current density [A.m-2]"] = lambda c_e, c_s_surf, c_s_max, T: \
             get_parameter_values()["Negative electrode exchange-current density [A.m-2]"](c_e, c_s_surf, c_s_max, T) * f_exc
 
-        # Adjust initial loss (proxy via initial concentration)
         param_vals["Initial concentration in negative electrode [mol.m-3]"] *= f_loss
 
         return param_vals
@@ -215,11 +224,13 @@ class DSMOptimizer:
         n = len(theta)
         S = np.zeros((3, n))
         eps = 1e-4
+        # Jacobian window matched to residual window (1800s) for mathematical consistency
+        t_eval = 1800
         for i in range(n):
             th_p = theta.copy(); th_p[i] += eps
             sim_p = self.setup_sim(th_p)
             try:
-                sol_p = sim_p.solve([0, 60])
+                sol_p = sim_p.solve([0, t_eval])
                 v_p = float(np.array(sol_p["Terminal voltage [V]"].entries).flatten()[-1])
                 t_p = float(np.array(sol_p["Cell temperature [K]"].entries).flatten()[-1])
                 soc_p = 1.0 - (float(np.array(sol_p["Discharge capacity [A.h]"].entries).flatten()[-1]) / 10.0)
@@ -228,7 +239,7 @@ class DSMOptimizer:
             th_m = theta.copy(); th_m[i] -= eps
             sim_m = self.setup_sim(th_m)
             try:
-                sol_m = sim_m.solve([0, 60])
+                sol_m = sim_m.solve([0, t_eval])
                 v_m = float(np.array(sol_m["Terminal voltage [V]"].entries).flatten()[-1])
                 t_m = float(np.array(sol_m["Cell temperature [K]"].entries).flatten()[-1])
                 soc_m = 1.0 - (float(np.array(sol_m["Discharge capacity [A.h]"].entries).flatten()[-1]) / 10.0)
