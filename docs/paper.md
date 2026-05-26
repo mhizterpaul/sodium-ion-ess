@@ -99,11 +99,10 @@ This ensures DFN simulation validity by maintaining compatibility with the calib
 The projected design space ($\theta = [\theta_s, \theta_m]$) is optimized using a coupled multiphysics operator $y = F(\theta)$.
 
 **Design Space and the various material-level optimization strategies discussed herein.**
-The projected design space ($\theta = [\theta_s, \theta_m]$) is optimized using a coupled multiphysics operator $y = F(\theta)$. This framework facilitates performance enhancement by perturbing other dopant sites (beyond the Fe-site) and exploring a broader range of electrolyte systems (solvents and additives) to further enhance cycle life and energy density. The model tracks SOC during discharge operation and HOC evolution alongside thermal PDE response under peak current loading and transient demand profiles, utilizing a Gauss–Newton (Levenberg-Marquardt) update on the sensitivity manifold to determine the optimal configuration:
+The framework utilizes a Gauss–Newton (Levenberg-Marquardt) update on the sensitivity manifold to determine the optimal configuration:
     $\theta_{k+1} = \theta_k - \eta (S^T S + \lambda I)^{-1} S^T (y - y_{target})$
 5. Stability Validation (Physics Consistency Check)
 The final optimized configuration is validated through a coupled multiphysics framework in PyBaMM, assessing the electrochemical and thermal response under representative operating profiles. While this work focuses on a foundational design space, the cell architecture remains amenable to further performance enhancement via composite electrode structuring, advanced pore network engineering, and the various material-level optimization strategies discussed herein. The current optimization scope is intentionally streamlined to accommodate the computational constraints of the DFN solver while effectively demonstrating the viability of physics-based optimization for enhancing the cost-efficiency and performance of sodium-ion energy storage systems.
-The model tracks SOC during discharge operation and HOC evolution alongside thermal PDE response under peak current loading and transient demand profiles.
 Computed cell-level performance metrics include:  Energy capacity (kWh), Nominal voltage (V), Continuous current (A), Peak current (A), Charge time (h or min under rated C-rate), Power capability (kW or C-rate equivalent), Cycle life (cycles to end-of-life under defined SOH threshold) 
 
 6. Expected Outcome

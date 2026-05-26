@@ -19,9 +19,13 @@ class DSMOptimizer:
     Differentiable Sensitivity Manifold Optimizer (DSMO).
     Coupled PyBaMM + FEniCSx Multiphysics sensitivities.
     Optimizes structural parameters (hybrid symbolic) and material selection (finite diff).
+    Targeting optimal performance and efficiency.
     """
     def __init__(self, target_y=None):
-        self.target_y = target_y if target_y is not None else np.array([3.1, 305.0, 0.5, 1e-6])
+        # Target [Voltage, Temperature, SOC, Strain] set for optimal performance
+        # 3.3V (high power), 298.15K (minimal heating), 0.5 SOC, 1e-8 (minimal strain)
+        self.target_y = target_y if target_y is not None else np.array([3.3, 298.15, 0.5, 1e-8])
+
         self.discovery = MaterialDiscoveryFramework()
         self.material_data = self.discovery.run_discovery()
 
@@ -56,33 +60,34 @@ class DSMOptimizer:
         alpha_s = np.clip(theta_m[1], 0, 1)
         alpha_f = np.clip(theta_m[2], 0, 1)
 
-        dopants = self.material_data["Cathode_Dopant"]
-        salts = self.material_data["Salt"]
-        mtms = self.material_data["Functionalization"][0]
+        dopants = self.material_data.get("Cathode_Dopant", [])
+        salts = self.material_data.get("Salt", [])
+        func_list = self.material_data.get("Functionalization", [])
 
-        d_v = (1-alpha_d)*dopants[0].projected_delta.get("voltage_boost", 0) + alpha_d*dopants[1].projected_delta.get("voltage_boost", 0)
-        d_diff = (1-alpha_d)*dopants[0].projected_delta.get("diffusivity_mult", 1) + alpha_d*dopants[1].projected_delta.get("diffusivity_mult", 1)
-        s_cond = (1-alpha_s)*salts[0].projected_delta.get("conductivity_mult", 1) + alpha_s*salts[1].projected_delta.get("conductivity_mult", 1)
-        s_trans = (1-alpha_s)*salts[0].projected_delta.get("ion_transference_mult", 1) + alpha_s*salts[1].projected_delta.get("ion_transference_mult", 1)
-
-        f_sei = 1.0 + alpha_f * (mtms.projected_delta.get("sei_growth_mult", 1.0) - 1.0)
-        loss_reduction = 1.0 - mtms.projected_delta.get("initial_loss_mult", 1.0)
-        f_loss = 1.0 + alpha_f * (loss_reduction * 0.1)
-        f_exc = 1.0 + alpha_f * (mtms.projected_delta.get("exchange_current_mult", 1.0) - 1.0)
-        f_res = 1.0 + alpha_f * (mtms.projected_delta.get("resistance_drift_mult", 1.0) - 1.0)
-
-        # Functional wrapping to ensure compatibility with PyBaMM callables
-        base_ocp = param_vals["Positive electrode OCP [V]"]
-        param_vals["Positive electrode OCP [V]"] = lambda sto: base_ocp(sto) + d_v
-
-        base_diff_p = param_vals["Positive particle diffusivity [m2.s-1]"]
-        param_vals["Positive particle diffusivity [m2.s-1]"] = lambda sto, T: base_diff_p(sto, T) * d_diff
-
-        base_cond = param_vals["Electrolyte conductivity [S.m-1]"]
-        if callable(base_cond):
-            param_vals["Electrolyte conductivity [S.m-1]"] = lambda c_e, T: base_cond(c_e, T) * s_cond
+        if len(dopants) < 2 or len(salts) < 2 or len(func_list) < 1:
+            d_v, d_diff, s_cond, s_trans = 0, 1.0, 1.0, 1.0
+            f_sei, f_loss, f_exc, f_res = 1.0, 1.0, 1.0, 1.0
         else:
-            param_vals["Electrolyte conductivity [S.m-1]"] *= s_cond
+            d_v = (1-alpha_d)*dopants[0].projected_delta.get("voltage_boost", 0) + alpha_d*dopants[1].projected_delta.get("voltage_boost", 0)
+            d_diff = (1-alpha_d)*dopants[0].projected_delta.get("diffusivity_mult", 1) + alpha_d*dopants[1].projected_delta.get("diffusivity_mult", 1)
+            s_cond = (1-alpha_s)*salts[0].projected_delta.get("conductivity_mult", 1) + alpha_s*salts[1].projected_delta.get("conductivity_mult", 1)
+            s_trans = (1-alpha_s)*salts[0].projected_delta.get("ion_transference_mult", 1) + alpha_s*salts[1].projected_delta.get("ion_transference_mult", 1)
+
+            mtms = func_list[0]
+            f_sei = 1.0 + alpha_f * (mtms.projected_delta.get("sei_growth_mult", 1.0) - 1.0)
+            loss_red = 1.0 - mtms.projected_delta.get("initial_loss_mult", 1.0)
+            f_loss = 1.0 + alpha_f * (loss_red * 0.1)
+            f_exc = 1.0 + alpha_f * (mtms.projected_delta.get("exchange_current_mult", 1.0) - 1.0)
+            f_res = 1.0 + alpha_f * (mtms.projected_delta.get("resistance_drift_mult", 1.0) - 1.0)
+
+        def wrap_callable(base, mult, additive=0):
+            if callable(base):
+                return lambda *args, **kwargs: base(*args, **kwargs) * mult + additive
+            return base * mult + additive
+
+        param_vals["Positive electrode OCP [V]"] = wrap_callable(param_vals["Positive electrode OCP [V]"], 1.0, d_v)
+        param_vals["Positive particle diffusivity [m2.s-1]"] = wrap_callable(param_vals["Positive particle diffusivity [m2.s-1]"], d_diff)
+        param_vals["Electrolyte conductivity [S.m-1]"] = wrap_callable(param_vals["Electrolyte conductivity [S.m-1]"], s_cond)
 
         param_vals["Cation transference number"] *= s_trans
         param_vals["SEI reaction exchange current density [A.m-2]"] *= f_sei
@@ -115,7 +120,7 @@ class DSMOptimizer:
         return sim
 
     def run(self):
-        print(f"Starting Hybrid Multiphysics DSMO for {len(self.all_keys)} parameters...")
+        print(f"Starting Optimal Performance DSMO for {len(self.all_keys)} parameters...")
 
         theta_vec = self.theta
         for k in range(self.max_iters):
@@ -145,7 +150,7 @@ class DSMOptimizer:
             theta_vec[10:] = np.clip(theta_vec[10:], 0, 1)
 
             print(f"  Iteration {k}: Residual Norm = {np.linalg.norm(r):.4f}")
-            if np.linalg.norm(r) < 1e-4: break
+            if np.linalg.norm(r) < 1e-3: break
 
         return {"design": theta_vec.tolist(), "selected_dopant": "Cr" if theta_vec[10] > 0.5 else "Mn",
                 "selected_salt": "NaTCP" if theta_vec[11] > 0.5 else "NaBOB", "mtms_applied": "Yes" if theta_vec[12] > 0.5 else "No"}
