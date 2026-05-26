@@ -20,7 +20,7 @@ The primary research focus is the design and validation of a model-based Battery
 
 ### 3. Hierarchical Optimization (DSMO)
 A multi-stage framework for cell design enhancement:
-*   **Material Discovery**: Property acquisition for eco-friendly, **non-fluorinated salts** (NaTCP, NaBOB) and Fe-site doping (**Cr**, **Mn**) using OQMD/AFLOW APIs.
+*   **Material Discovery**: Property acquisition for eco-friendly, **non-fluorinated salts** (NaTCP, NaBOB), Fe-site doping (**Cr**, **Mn**), and electrode functionalization (**MTMS**) using OQMD/AFLOW APIs.
 *   **Parameter Optimization**: Differentiable Sensitivity Manifold Optimization (DSMO) fine-tuning a coupled design space:
     - **Structural ($\theta_s$):** Thickness, porosity, tortuosity, loading, and particle size.
     - **Material ($\theta_m$):** NFPP/carbon fractions and electrolyte composition.
