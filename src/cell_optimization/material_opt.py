@@ -1,7 +1,17 @@
+import json
+import urllib.error
+import urllib.parse
+import urllib.request
+
 import numpy as np
 import pybamm
 import casadi
-import requests
+
+try:
+    import requests
+except ImportError:
+    requests = None
+
 from dataclasses import dataclass, field
 from typing import List, Dict
 
@@ -56,50 +66,105 @@ class MaterialCandidate:
     reference: str = "OQMD / Literature"
 
 class MaterialDiscoveryFramework:
-    """Hierarchical property acquisition using OQMD/AFLOW APIs for NFPP optimization."""
+    """Hierarchical property acquisition using OQMD APIs for NFPP optimization."""
 
     def __init__(self):
-        self.oqmd_url = "http://oqmd.org/oqmdapi/formationenergy"
+        self.oqmd_url = "https://oqmd.org/oqmdapi/formationenergy"
+
+    def _normalize_oqmd_data(self, data):
+        if isinstance(data, dict):
+            if isinstance(data.get("results"), list):
+                return data["results"]
+            if isinstance(data.get("data"), list):
+                return data["data"]
+            return []
+        if isinstance(data, list):
+            return data
+        return []
+
+    def _fetch_oqmd_results(self, formula: str, limit: int = 10) -> List[dict]:
+        params = {"composition": formula, "limit": limit}
+        errors = []
+
+        if requests is not None:
+            try:
+                with requests.Session() as session:
+                    response = session.get(self.oqmd_url, params=params, timeout=10)
+                    response.raise_for_status()
+                    return self._normalize_oqmd_data(response.json())
+            except Exception as exc:
+                errors.append(
+                    f"requests fetch failed for formula={formula} url={self.oqmd_url} "
+                    f"status={getattr(exc, 'response', None).status_code if hasattr(exc, 'response') and exc.response is not None else 'N/A'} "
+                    f"error={type(exc).__name__}: {exc}"
+                )
+
+        query = urllib.parse.urlencode(params)
+        url = f"{self.oqmd_url}?{query}"
+        try:
+            with urllib.request.urlopen(url, timeout=10) as response:
+                payload = response.read().decode("utf-8")
+                return self._normalize_oqmd_data(json.loads(payload))
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")[:250]
+            errors.append(
+                f"urllib HTTP {exc.code} for formula={formula} url={url}: {exc.reason}. "
+                f"body={body}"
+            )
+        except urllib.error.URLError as exc:
+            errors.append(f"urllib URL error for formula={formula} url={url}: {exc.reason}")
+        except json.JSONDecodeError as exc:
+            errors.append(f"urllib JSON decode failed for formula={formula} url={url}: {exc.msg}")
+        except Exception as exc:
+            errors.append(f"urllib fetch failed for formula={formula} url={url}: {type(exc).__name__}: {exc}")
+
+        print(
+            f"OQMD fetch failed for {formula}. "
+            f"Attempted {self.oqmd_url} with {len(errors)} error(s): {' | '.join(errors)}"
+        )
+        return []
 
     def acquire_properties(self, formula: str, category: str) -> List[MaterialCandidate]:
         """Queries OQMD API to get thermodynamic stability and derives performance deltas."""
-        try:
-            r = requests.get(self.oqmd_url, params={"composition": formula, "limit": 10}, timeout=10)
-            if r.status_code == 200:
-                data = r.json().get('results', [])
-                candidates = []
-                for d in data:
-                    comp = d.get('composition', formula)
-                    stability = abs(d.get('stability', 0.1))
+        data = self._fetch_oqmd_results(formula)
+        candidates = []
 
-                    # Map stability to performance scaling
-                    perf_scale = 1.0 / (1.0 + stability)
+        for entry in data:
+            comp = entry.get("composition", formula)
+            stability = abs(float(entry.get("stability", entry.get("energy_above_hull", 0.1) or 0.1)))
+            perf_scale = 1.0 / (1.0 + stability)
 
-                    # Match to our target dopants/salts based on composition string
-                    key = None
-                    if "Mn" in comp: key = "Mn"
-                    elif "Cr" in comp: key = "Cr"
-                    elif "B" in comp and "O" in comp: key = "NaBOB"
-                    elif "C" in comp and "N" in comp: key = "NaTCP"
+            key = None
+            normalized = comp.upper()
+            if "MN" in normalized:
+                key = "Mn"
+            elif "CR" in normalized:
+                key = "Cr"
+            elif "NABOB" in normalized or ("B" in normalized and "O" in normalized and "NA" in normalized):
+                key = "NaBOB"
+            elif "NATCP" in normalized or ("C" in normalized and "N" in normalized and "O" in normalized and "NA" in normalized):
+                key = "NaTCP"
 
-                    if not key or key not in PROPERTY_HEURISTICS: continue
+            if not key or key not in PROPERTY_HEURISTICS:
+                continue
 
-                    heuristics = PROPERTY_HEURISTICS.get(key, {})
-                    projected = {k: v * perf_scale for k, v in heuristics.items() if k not in ["cost", "ref"]}
+            heuristics = PROPERTY_HEURISTICS[key]
+            projected = {k: v * perf_scale for k, v in heuristics.items() if k not in {"cost", "ref"}}
+            if not projected:
+                projected = {k: v for k, v in heuristics.items() if k not in {"cost", "ref"}}
 
-                    candidates.append(MaterialCandidate(
-                        name=key, category=category, composition=comp,
-                        energy_above_hull=stability,
-                        production_cost=heuristics.get("cost", 0.5 if category == "Salt" else 0.2),
-                        fluorine_fraction=0.0,
-                        projected_delta=projected,
-                        reference=heuristics.get("ref", "OQMD")
-                    ))
-                if candidates: return candidates
-        except Exception as e:
-            print(f"API Acquisition failed for {formula}: {e}.")
+            candidates.append(MaterialCandidate(
+                name=key,
+                category=category,
+                composition=comp,
+                energy_above_hull=stability,
+                production_cost=heuristics.get("cost", 0.5 if category == "Salt" else 0.2),
+                fluorine_fraction=0.0,
+                projected_delta=projected,
+                reference=heuristics.get("ref", "OQMD")
+            ))
 
-        return self._get_fallback_candidates(category, formula)
+        return candidates if candidates else self._get_fallback_candidates(category, formula)
 
     def _get_fallback_candidates(self, category: str, formula: str) -> List[MaterialCandidate]:
         """Referenced Fallback logic for high-reliability acquisition."""
