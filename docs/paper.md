@@ -89,9 +89,9 @@ The cell design is optimized using a hierarchical Material-Structural framework.
 
 1. Stage A-C: Material Discovery & Property Acquisition Framework
 This phase acquires performance properties for chemistry modifications using an automated acquisition framework.
-*   **Automated Discovery Engine:** The framework queries the OQMD API to retrieve thermodynamic stability data for candidate materials. Performance deltas (e.g., diffusivity multipliers, voltage shifts) are derived from these fundamental properties using research-informed heuristics.
+*   **Automated Discovery Engine:** The framework queries the OQMD API to retrieve thermodynamic and electronic properties for candidate materials. Performance deltas (e.g., voltage shifts from formation energy, diffusivity multipliers from specific volume, and conductivity from band gap) are derived purely from these fundamental properties.
 *   **Electrolyte & Fluorine Reduction:** Selection of non-fluorinated salts to reduce environmental burden and cost. Primary candidates include **NaBOB** (Sodium bis(oxalato)borate) for stability and **NaTCP** (Sodium tricyanomethanide) for high performance.
-*   **Electrode Doping:** Fe-site doping for cathodes using **Cr** (Cr³⁺ stabilizer) and **Mn** (voltage booster) is evaluated via sensitivity-based manifold optimization.
+*   **Electrode Doping:** Fe-site doping for cathodes using **Cr** (Cr³⁺ stabilizer), **Mn** (voltage booster), and **Ni** is evaluated via sensitivity-based manifold optimization.
 *   **Alkyl Silane Functionalization:** Implementation of hard carbon electrode functionalization using **methyltrimethoxysilane (MTMS)**. This process replaces surface –OH groups with –Si–O–R groups on the hard carbon electrode, increasing hydrophobicity and promoting a more uniform SEI layer. The model accounts for reduced SEI kinetics (slower growth and lower irreversible capacity fade), slower interfacial resistance growth over cycles, and optimized exchange current density resulting from improved surface wetting and local ion accessibility.
 
 2. Stage D: Electrochemical Projection Layer

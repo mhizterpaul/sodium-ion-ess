@@ -29,6 +29,11 @@ class DSMOptimizer:
         self.discovery = MaterialDiscoveryFramework()
         self.material_data = self.discovery.run_discovery()
 
+        # Pre-extract deltas via pybamm-mapped logic
+        self.d_deltas = [d.to_pybamm_delta() for d in self.material_data.get("Cathode_Dopant", [])]
+        self.s_deltas = [s.to_pybamm_delta() for s in self.material_data.get("Salt", [])]
+        self.f_delta = self.material_data.get("Functionalization", [None])[0].to_pybamm_delta() if self.material_data.get("Functionalization") else {}
+
         self.lr = 0.05
         self.max_iters = 5
         self.lam = 1e-3
@@ -64,21 +69,12 @@ class DSMOptimizer:
         d1, d2 = np.clip(theta_m[0], 0, 1), np.clip(theta_m[1], 0, 1)
         alpha_s, alpha_f = np.clip(theta_m[2], 0, 1), np.clip(theta_m[3], 0, 1)
 
-        dopants = self.material_data.get("Cathode_Dopant", [])
-        salts = self.material_data.get("Salt", [])
-        func_list = self.material_data.get("Functionalization", [])
-
-        if len(dopants) < 3 or len(salts) < 2 or len(func_list) < 1:
+        if len(self.d_deltas) < 3 or len(self.s_deltas) < 2:
             return param_vals
 
         # Aggregate perturbations using simplex weights for dopants and linear for others
         # weights: Mn (0), Cr (1), Ni (2)
         w = [1-d1, d1*(1-d2), d1*d2]
-
-        # Extracted deltas via pybamm-mapped logic
-        d_deltas = [d.to_pybamm_delta() for d in dopants]
-        s_deltas = [s.to_pybamm_delta() for s in salts]
-        f_delta = func_list[0].to_pybamm_delta()
 
         def apply_perturbation(name, weight_list, delta_list):
             base = param_vals[name]
@@ -89,28 +85,30 @@ class DSMOptimizer:
                 elif mode == "additive": add += w_i * val
 
             if callable(base):
-                param_vals[name] = lambda *args, **kwargs: base(*args, **kwargs) * mult + add
+                def make_wrapper(b, m_val, a_val):
+                    return lambda *args, **kwargs: b(*args, **kwargs) * m_val + a_val
+                param_vals[name] = make_wrapper(base, mult, add)
             else:
                 param_vals[name] = base * mult + add
 
         # Apply Cathode perturbations
         for k in ["Positive electrode OCP [V]", "Positive particle diffusivity [m2.s-1]"]:
-            apply_perturbation(k, w, d_deltas)
+            apply_perturbation(k, w, self.d_deltas)
 
         # Apply Salt perturbations
         s_w = [1-alpha_s, alpha_s]
         for k in ["Electrolyte conductivity [S.m-1]", "Cation transference number"]:
-            apply_perturbation(k, s_w, s_deltas)
+            apply_perturbation(k, s_w, self.s_deltas)
 
         # Apply MTMS perturbations (on/off)
-        for k, (mode, val) in f_delta.items():
+        for k, (mode, val) in self.f_delta.items():
             base = param_vals[k]
             m = (1.0 + alpha_f * (val - 1.0)) if mode == "multiplier" else 1.0
             a = (alpha_f * val) if mode == "additive" else 0.0
 
             if callable(base):
-                def make_wrapper(b, mult, add):
-                    return lambda *args, **kwargs: b(*args, **kwargs) * mult + add
+                def make_wrapper(b, m_val, a_val):
+                    return lambda *args, **kwargs: b(*args, **kwargs) * m_val + a_val
                 param_vals[k] = make_wrapper(base, m, a)
             else:
                 param_vals[k] = base * m + a
