@@ -20,7 +20,7 @@ The primary research focus is the design and validation of a model-based Battery
 
 ### 3. Hierarchical Optimization (DSMO)
 A multi-stage framework for cell design enhancement:
-*   **Material Mapping**: A constrained physics-based mapping engine for eco-friendly, **non-fluorinated salts** (NaTCP, NaBOB), cathode dopants (**Cr**, **Mn**, **Ni**), and electrode functionalization (**MTMS**) using OQMD and Materials Project APIs. Subsystem-specific deltas are derived from fundamental thermodynamic and electronic states via decoupled physics channels.
+*   **Layered Material Mapping**: A decoupled architecture for eco-friendly, **non-fluorinated salts** (NaTCP, NaBOB), cathode dopants (**Cr**, **Mn**, **Ni**), and electrode functionalization (**MTMS**). Thermodynamic/electronic states are resolved from OQMD/MP APIs and transformed into PyBaMM parameters via dedicated physics channels (Nernstian proxies, exponential conductivity mapping).
 *   **Parameter Optimization**: Differentiable Sensitivity Manifold Optimization (DSMO) fine-tuning a coupled design space:
     - **Structural ($\theta_s$):** Thickness, porosity, tortuosity, loading, and particle size.
     - **Material ($\theta_m$):** NFPP/carbon fractions and electrolyte composition.
