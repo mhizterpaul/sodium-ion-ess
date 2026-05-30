@@ -1,6 +1,6 @@
 {
   "{\"composition\": \"Na4Fe3P4O15\", \"limit\": 1}": [],
-  "{\"filter\": \"element_set=(P,Na,O,Fe) AND ntypes=4\", \"limit\": 10}": [
+  "{\"filter\": \"element_set=(P,Fe,Na,O) AND ntypes=4\", \"limit\": 10}": [
     {
       "name": "NaFePO4",
       "entry_id": 10134,
@@ -178,7 +178,7 @@
     }
   ],
   "{\"composition\": \"C5H3Cl3NNaO\", \"limit\": 1}": [],
-  "{\"filter\": \"element_set=(C,Na,Cl,N,H,O) AND ntypes=6\", \"limit\": 10}": [
+  "{\"filter\": \"element_set=(C,O,Cl,H,Na,N) AND ntypes=6\", \"limit\": 10}": [
     {
       "name": "NaH6CN2ClO2",
       "entry_id": 23037,
@@ -211,7 +211,71 @@
     }
   ],
   "{\"composition\": \"C4H12O3Si\", \"limit\": 1}": [],
-  "{\"filter\": \"element_set=(Si,C,O,H) AND ntypes=4\", \"limit\": 10}": [
+  "{\"filter\": \"element_set=(H,C,Si,O) AND ntypes=4\", \"limit\": 10}": [
+    {
+      "name": "SiH24C26O",
+      "entry_id": 2065051,
+      "composition": "C26 H24 O1 Si1",
+      "volume": 1008.24,
+      "natoms": 104,
+      "band_gap": 3.06,
+      "delta_e": -0.05751914823651834,
+      "stability": 0.18189062174407628
+    },
+    {
+      "name": "Si10H70C32O",
+      "entry_id": 2061309,
+      "composition": "C32 H70 O1 Si10",
+      "volume": 1129.8,
+      "natoms": 113,
+      "band_gap": 3.931,
+      "delta_e": -0.19712929733425646,
+      "stability": 0.07573706655144621
+    },
+    {
+      "name": "SiH12C4O4",
+      "entry_id": 112059,
+      "composition": "C4 H12 O4 Si1",
+      "volume": 351.327,
+      "natoms": 42,
+      "band_gap": 4.911,
+      "delta_e": -0.537674637129767,
+      "stability": 0.3607433782130868
+    }
+  ],
+  "{\"filter\": \"element_set=(Cl,Na,H,O,C,N) AND ntypes=6\", \"limit\": 10}": [
+    {
+      "name": "NaH6CN2ClO2",
+      "entry_id": 23037,
+      "composition": "C1 Cl1 H6 N2 Na1 O2",
+      "volume": 272.615,
+      "natoms": 26,
+      "band_gap": 5.253,
+      "delta_e": -0.977613569193873,
+      "stability": 0.008032794965508017
+    },
+    {
+      "name": "NaH6CN2ClO2",
+      "entry_id": 121132,
+      "composition": "C1 Cl1 H6 N2 Na1 O2",
+      "volume": 539.07,
+      "natoms": 52,
+      "band_gap": 5.252,
+      "delta_e": -0.976139235732335,
+      "stability": 0.009507128427046041
+    },
+    {
+      "name": "NaH24C18N6ClO4",
+      "entry_id": 2044928,
+      "composition": "C18 Cl1 H24 N6 Na1 O4",
+      "volume": 550.524,
+      "natoms": 54,
+      "band_gap": 5.257,
+      "delta_e": -0.1434293216567971,
+      "stability": 0.35244239901581154
+    }
+  ],
+  "{\"filter\": \"element_set=(O,C,H,Si) AND ntypes=4\", \"limit\": 10}": [
     {
       "name": "SiH24C26O",
       "entry_id": 2065051,

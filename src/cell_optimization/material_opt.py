@@ -73,8 +73,9 @@ class MaterialDiscoveryFramework:
         clean_cache = {}
         for key, val in self.cache.items():
             try:
-                parsed = json.loads(key)
-                norm_key = json.dumps(parsed, sort_keys=True)
+                # Key is a JSON string of params, normalize it
+                p = json.loads(key)
+                norm_key = json.dumps(p, sort_keys=True)
                 if norm_key not in clean_cache:
                     clean_cache[norm_key] = val
             except Exception:
@@ -105,9 +106,8 @@ class MaterialDiscoveryFramework:
             return []
 
     def get_properties(self, composition: str) -> Dict[str, float]:
-        """Fetch properties from OQMD. Fallback to stable chemistry if exact fail."""
+        """Fetch thermodynamic and electronic properties from OQMD."""
         results = self._fetch_oqmd({"composition": composition, "limit": 1})
-
         if not results:
             elements = list(set(re.findall(r'[A-Z][a-z]?', composition)))
             if elements:
@@ -116,6 +116,7 @@ class MaterialDiscoveryFramework:
 
         if results:
             try:
+                # Sort by stability if multiple results
                 results.sort(key=lambda x: float(x.get("stability", 1.0)))
                 best = results[0]
                 natoms = float(best.get("natoms", 1.0))
@@ -139,26 +140,28 @@ class MaterialDiscoveryFramework:
             # Baseline from PyBaMM
             base_ocp = self.base_params["Positive electrode OCP [V]"]
             try:
-                # Handle CasADi Scalar outputs if present
+                # Sample at 0.5 stoichiometry
                 v = base_ocp(0.5)
-                base_val = float(v.value) if hasattr(v, "value") else float(v)
+                # Handle possible PyBaMM scalar wrapper
+                base_val = float(getattr(v, 'value', v))
             except Exception:
                 base_val = 3.2
 
-            # delta_V ≈ -delta_G / nF. Scale for 0.1 doping concentration.
+            # ΔV ≈ -ΔEf (eV). Scale for 0.1 doping concentration relative to baseline OCP.
             deltas["voltage_boost"] = -de_diff * 0.1 * (base_val / 3.2)
 
-            # Diffusivity scale
+            # Diffusivity scaling from volume
             vol_ratio = target_props["volume_per_atom"] / base_props["volume_per_atom"]
             deltas["diffusivity_mult"] = vol_ratio ** 2
 
         elif category == "Salt":
-            # Conductivity baseline
+            # Conductivity scaling from band gap ratio relative to PyBaMM baseline conductivity
             bg_ratio = base_props["band_gap"] / max(target_props["band_gap"], 0.1)
             deltas["conductivity_mult"] = bg_ratio ** 0.5
             deltas["ion_transference_mult"] = 1.0 + (target_props["stability"] * 0.1)
 
         elif category == "Functionalization":
+            # HC effects derived from stability ratios
             stab_ratio = base_props["stability"] / max(target_props["stability"], 0.01)
             deltas["sei_growth_mult"] = 0.5 + 0.5 * (1.0/stab_ratio)
             deltas["initial_loss_mult"] = 0.6 + 0.4 * (1.0/stab_ratio)
@@ -171,20 +174,19 @@ class MaterialDiscoveryFramework:
         print("Executing Material Property Derivation via OQMD + PyBaMM...")
         system = {"Cathode_Dopant": [], "Salt": [], "Functionalization": []}
 
-        # Baselines
+        # Specific baseline cathode formula Na4Fe3P4O15 for derivation
         base_cathode_props = self.get_properties("Na4Fe3P4O15")
         base_salt = self.get_properties("NaPF6")
         base_hc = self.get_properties("C")
 
-        # 1. Cathode Dopants (Intercalation derived from stable end-members if exact fail)
+        # 1. Cathode Dopants (Doped Na4Fe3P4O15 interpolated from stable end-members)
         dopants = {"Mn": "NaMnPO4", "Cr": "NaCrPO4", "Ni": "NaNiPO4"}
         for d, end_member in dopants.items():
             doped_comp = f"Na4Fe2.9{d}0.1P4O15"
-            # Attempt to fetch specific doped chemistry
-            exact_props = self._fetch_oqmd({"composition": doped_comp, "limit": 1})
+            exact_results = self._fetch_oqmd({"composition": doped_comp, "limit": 1})
 
-            if exact_props:
-                best = exact_props[0]
+            if exact_results:
+                best = exact_results[0]
                 natoms = float(best.get("natoms", 1.0))
                 props = {
                     "stability": float(best.get("stability", 0.1)),
@@ -193,7 +195,7 @@ class MaterialDiscoveryFramework:
                     "volume_per_atom": float(best.get("volume", 1.0)) / natoms
                 }
             else:
-                # Interpolate from base cathode (Na4Fe3P4O15) and end-member
+                # Interpolate from baseline Na4Fe3P4O15 and stable dopant end-member
                 end_props = self.get_properties(end_member)
                 props = {
                     "stability": 0.9 * base_cathode_props["stability"] + 0.1 * end_props["stability"],
