@@ -154,6 +154,7 @@ class MaterialDiscoveryFramework:
         system = {"Cathode_Dopant": [], "Salt": [], "Functionalization": []}
 
         # Baseline properties
+        # Na4Fe3P4O15 represents Na4Fe3(PO4)2(P2O7)
         base_cathode = self.get_properties("Na4Fe3P4O15")
         base_salt = self.get_properties("NaPF6") # Baseline salt
         base_hc = self.get_properties("C")       # Baseline anode material
