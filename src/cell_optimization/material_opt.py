@@ -28,8 +28,6 @@ DOPANTS = ["Mn", "Cr", "Ni"]
 
 # --- SCIENTIFIC CONSTANTS ---
 CACHE_FILE = "material_cache.json"
-MP_API_KEY = os.environ.get("MP_API_KEY", "4wUDc4LwwKXSRWxiE6DHQS40pG45g0q6")
-OQMD_URL = "https://oqmd.org/oqmdapi/formationenergy"
 KT = 0.0259 # eV at 300K
 
 # Class Baselines (Fallback if API fails)
@@ -70,6 +68,7 @@ class MaterialMappingEngine:
         self.cache = self._load_cache()
         self.session = self._setup_session() if requests else None
         self.base_params = get_parameter_values()
+        self.mp_key = os.environ.get("MP_API_KEY")
 
     def _setup_session(self):
         session = requests.Session()
@@ -96,11 +95,14 @@ class MaterialMappingEngine:
         if cache_key in self.cache:
             return self.cache[cache_key]["props"], self.cache[cache_key]["conf"]
 
+        props, conf = None, 0.0
+
         # 1. OQMD Exact
         if self.session:
             try:
+                oqmd_url = "https://oqmd.org/oqmdapi/formationenergy"
                 params = {"composition": formula, "limit": 1, "fields": "delta_e,stability,band_gap,volume,natoms"}
-                r = self.session.get(OQMD_URL, params=params, timeout=15)
+                r = self.session.get(oqmd_url, params=params, timeout=15)
                 r.raise_for_status()
                 data = r.json().get("data", [])
                 if data:
@@ -111,13 +113,13 @@ class MaterialMappingEngine:
                         "band_gap": float(best.get("band_gap", 0.0)),
                         "volume_per_atom": float(best.get("volume", 1.0)) / float(best.get("natoms", 1.0))
                     }
-                    return props, 1.0
+                    conf = 1.0
             except Exception: pass
 
         # 2. MP Exact
-        if MPRester:
+        if not props and MPRester and self.mp_key:
             try:
-                with MPRester(api_key=MP_API_KEY) as mpr:
+                with MPRester(api_key=self.mp_key) as mpr:
                     docs = mpr.materials.summary.search(formula=formula, fields=['formation_energy_per_atom', 'energy_above_hull', 'band_gap', 'volume', 'nsites'])
                     if docs:
                         best = docs[0]
@@ -127,32 +129,34 @@ class MaterialMappingEngine:
                             "band_gap": best.band_gap,
                             "volume_per_atom": best.volume / best.nsites if best.nsites else 15.0
                         }
-                        return props, 0.9
+                        conf = 0.9
             except Exception: pass
 
         # 3. Class Baseline
-        return BASELINES.get(category_baseline, BASELINES["Anode"]), 0.5
+        if not props:
+            props = BASELINES.get(category_baseline, BASELINES["Anode"])
+            conf = 0.5
+
+        # Update cache
+        self.cache[cache_key] = {"props": props, "conf": conf}
+        self._save_cache()
+        return props, conf
 
     def derive_cathode_channel(self, dopant: str, base_props: Dict[str, float]) -> MaterialCandidate:
         """Dopant perturbation model for fixed NFPP framework."""
-        # We model dopants via their singular variant (e.g. Na2MnP2O7) to see perturbation direction
         formula = f"Na2{dopant}P2O7"
         props, conf = self._resolve_material(formula, "Cathode")
 
-        # Physics Parameters
         f_dopant = 0.1
-        alpha = 0.5 # Diffusion sensitivity
-        beta = 10.0 # Stability penalty decay
+        alpha = 0.5
+        beta = 10.0
 
-        # Voltage Shift
         de_diff = props["formation_energy"] - base_props["formation_energy"]
         v_boost = -de_diff * f_dopant
 
-        # Diffusion Modifier
         vol_ratio = props["volume_per_atom"] / base_props["volume_per_atom"]
         d_mult = 1.0 + alpha * (vol_ratio - 1.0)
 
-        # Stability Realization
         realization = math.exp(-beta * props["stability"])
 
         deltas = {
@@ -166,14 +170,11 @@ class MaterialMappingEngine:
         """Molecular dissociation proxy model."""
         props, conf = self._resolve_material(formula, "Salt")
 
-        gamma = 20.0 # Dissociation penalty
-
-        # Conductivity Index
+        gamma = 20.0
         gap_diff = base_props["band_gap"] - props["band_gap"]
         sigma_index = math.exp(gap_diff / (2 * KT))
         sigma_index = min(max(sigma_index, 0.2), 5.0)
 
-        # Stability Effect
         dissociation = 1.0 / (1.0 + math.exp(gamma * (props["stability"] - 0.05)))
 
         deltas = {
@@ -187,9 +188,7 @@ class MaterialMappingEngine:
         """MTMS SEI kinetics model."""
         props, conf = self._resolve_material(formula, "Anode")
 
-        kappa = 0.5 # Resistance sensitivity
-
-        # MTMS Effects
+        kappa = 0.5
         sei_growth = 0.5 + 0.5 * math.exp(-props["stability"] * 5.0)
         r_sei = 1.0 + kappa * (1.0 - math.exp(-props["stability"]))
         loss = 0.7 + 0.3 * (1.0 - math.exp(-props["stability"]))
@@ -206,19 +205,15 @@ class MaterialMappingEngine:
         print("Executing Constrained Materials-to-Parameter Mapping...")
         system = {"Cathode_Dopant": [], "Salt": [], "Functionalization": []}
 
-        # Resolving Baselines
         base_cathode, _ = self._resolve_material(BASE_CATHODE, "Cathode")
         base_salt, _ = self._resolve_material("NaPF6", "Salt")
 
-        # 1. Cathode Channel
         for d in DOPANTS:
             system["Cathode_Dopant"].append(self.derive_cathode_channel(d, base_cathode))
 
-        # 2. Salt Channel
         for name, formula in ALLOWED_SALTS.items():
             system["Salt"].append(self.derive_salt_channel(name, formula, base_salt))
 
-        # 3. Anode Channel
         for name, formula in ALLOWED_FUNCTIONALIZATION.items():
             system["Functionalization"].append(self.derive_anode_channel(name, formula))
 
