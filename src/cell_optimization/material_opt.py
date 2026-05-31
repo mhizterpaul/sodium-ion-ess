@@ -34,12 +34,7 @@ CACHE_FILE = "material_cache.json"
 CACHE_VERSION = "v2"
 KT = 0.0259 # eV at 300K
 
-# Class Baselines (Fallback if API fails)
-CLASS_BASELINES = {
-    "Cathode": {"stability": 0.15, "formation_energy": -2.25, "band_gap": 0.1, "volume_per_atom": 12.6},
-    "Salt": {"stability": 0.0, "formation_energy": -3.0, "band_gap": 7.9, "volume_per_atom": 12.7},
-    "Anode": {"stability": 0.05, "formation_energy": -0.12, "band_gap": 0.4, "volume_per_atom": 12.0}
-}
+
 
 @dataclass
 class MaterialCandidate:
