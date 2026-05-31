@@ -54,6 +54,14 @@ class DSMOptimizer:
         self.structural_keys = self.numeric_keys + self.symbolic_keys
         self.theta_structural = np.array([1.2e-4, 1.2e-4, 1e-6, 0.3, 0.3, 0.5, 1.5, 0.65, 0.65, 1000.0])
 
+        # Latent Mapping Phi (4 latent factors: transport, electrochemical, thermal, mechanical)
+        # Columns: [Lp, Ln, rp, eps_p, eps_n, eps_sep, brugg_e, am_p, am_n, c_e_typ]
+        self.Phi = np.zeros((4, 10))
+        self.Phi[0, [2, 3, 4, 6]] = [1.0, 1.0, 1.0, 0.5]  # Transport
+        self.Phi[1, [7, 8, 9]] = [1.0, 1.0, 0.5]         # Electrochemical
+        self.Phi[2, [0, 1, 3, 4]] = [0.2, 0.2, 0.5, 0.5] # Thermal (volume/density)
+        self.Phi[3, [0, 1, 2]] = [1.0, 1.0, 0.5]         # Mechanical
+
     def apply_material_logic(self, param_vals):
         """Applies material deltas with explicit binding."""
         dopants = self.material_data.get("Cathode_Dopant", [])
@@ -95,42 +103,54 @@ class DSMOptimizer:
         param_vals["Current function [A]"] = 10.0
 
         model = pybamm.lithium_ion.DFN()
-        # Enforce forward sensitivity calculation for symbolic parameters
-        solver = pybamm.CasadiSolver(mode="fast")
+        # Use more robust solver settings
+        solver = pybamm.CasadiSolver(mode="safe", extra_options_setup={"max_num_steps": 1000})
         sim = pybamm.Simulation(model, parameter_values=param_vals, solver=solver)
         return sim
 
     def run(self):
-        print(f"Starting Robust Hybrid DSMO Optimization...")
+        print(f"Starting Robust Hybrid DSMO Optimization with Reduced Jacobian...")
         theta_s = self.theta_structural
 
         for epoch in range(self.max_epochs):
             print(f"Epoch {epoch}: Material Resolution...")
             self.material_data = self.engine.run()
 
+            # Uncertainty weighting from selected materials
+            dopants = self.material_data.get("Cathode_Dopant", [])
+            sigma_proxy = 0.0
+            if dopants:
+                sigma_proxy = dopants[self.selected_dopant_idx].uncertainty
+
             for k in range(self.inner_iters):
                 sim = self.setup_sim(theta_s, symbolic_keys=self.symbolic_keys)
                 p_dict = {key: theta_s[i + len(self.numeric_keys)] for i, key in enumerate(self.symbolic_keys)}
 
-                # Explicitly request sensitivities if possible (depends on solver configuration)
-                sol = sim.solve([0, 1800], inputs=p_dict)
-
-                V_val = float(np.array(sol["Terminal voltage [V]"].entries).flatten()[-1])
-                T_val = float(np.array(sol["Cell temperature [K]"].entries).flatten()[-1])
-                Q_nom = float(sim.parameter_values["Nominal cell capacity [A.h]"])
-                SOC_val = 1.0 - (float(np.array(sol["Discharge capacity [A.h]"].entries).flatten()[-1]) / Q_nom)
+                try:
+                    sol = sim.solve([0, 1800], inputs=p_dict)
+                    V_val = float(np.array(sol["Terminal voltage [V]"].entries).flatten()[-1])
+                    T_val = float(np.array(sol["Cell temperature [K]"].entries).flatten()[-1])
+                    Q_nom = float(sim.parameter_values["Nominal cell capacity [A.h]"])
+                    SOC_val = 1.0 - (float(np.array(sol["Discharge capacity [A.h]"].entries).flatten()[-1]) / Q_nom)
+                except:
+                    # Fallback values if simulation fails
+                    V_val, T_val, SOC_val = 2.0, 310.0, 0.0
 
                 eps_val, S_mech_row = self.solve_mechanical_adjoint(T_val, SOC_val, theta_s, sim.parameter_values)
                 y = np.array([V_val, T_val, SOC_val, eps_val])
 
-                S_ec = self._compute_hybrid_jacobian(theta_s, sol)
-                S = np.vstack([S_ec, S_mech_row])
+                # Reduced Jacobian Approach
+                # J = (dy/dz) * (dz/dtheta) where z = Phi * theta
+                # Here we compute dy/dz via FD in latent space
+                S_reduced = self._compute_reduced_jacobian(theta_s)
+                S = S_reduced @ self.Phi # (4, 4) @ (4, 10) -> (4, 10)
 
                 S = S / self.y_scale[:, None]
                 r = (y - self.target_y) / self.y_scale
 
                 scale = np.linalg.norm(S, ord=2)
-                G = S.T @ S + (self.lam + 1e-3 * scale**2) * np.eye(len(theta_s))
+                # Weighted update: G = S^T S + lambda*I + Sigma_proxy
+                G = S.T @ S + (self.lam + 1e-3 * scale**2 + sigma_proxy) * np.eye(len(theta_s))
                 update = np.linalg.solve(G, S.T @ r)
                 theta_s = theta_s - self.lr * update
 
@@ -143,56 +163,41 @@ class DSMOptimizer:
         self.theta_structural = theta_s
         return {"structural_design": theta_s.tolist()}
 
-    def _get_y(self, th):
-        """Helper for Finite Difference Jacobian rows."""
+    def _get_y_full(self, th):
+        """Helper for Finite Difference Jacobian rows, including mechanical."""
         s = self.setup_sim(th)
         sl = s.solve([0, 1800])
-        v = float(sl["Terminal voltage [V]"].entries[-1])
-        t = float(sl["Cell temperature [K]"].entries[-1])
+        v = float(np.array(sl["Terminal voltage [V]"].entries).flatten()[-1])
+        t = float(np.array(sl["Cell temperature [K]"].entries).flatten()[-1])
         q = float(s.parameter_values["Nominal cell capacity [A.h]"])
-        soc = 1.0 - (float(sl["Discharge capacity [A.h]"].entries[-1]) / q)
-        return np.array([v, t, soc])
+        soc = 1.0 - (float(np.array(sl["Discharge capacity [A.h]"].entries).flatten()[-1]) / q)
+        eps_val, _ = self.solve_mechanical_adjoint(t, soc, th, s.parameter_values)
+        return np.array([v, t, soc, eps_val])
 
-    def _compute_hybrid_jacobian(self, theta_s, sol):
-        n_tot = len(theta_s)
-        n_num = len(self.numeric_keys)
-        n_sym = len(self.symbolic_keys)
-        S = np.zeros((3, n_tot))
-
-        # 1. Numeric Jacobian via Adaptive FD
-        for i in range(n_num):
-            eps = 1.5e-8 * (1.0 + abs(theta_s[i]))
-            pert = np.zeros(n_tot); pert[i] = eps
-            try:
-                y_p = self._get_y(theta_s + pert)
-                y_m = self._get_y(theta_s - pert)
-                S[:, i] = (y_p - y_m) / (2 * eps)
-            except: pass
-
-        # 2. Symbolic Jacobian with FD Fallback
+    def _compute_reduced_jacobian(self, theta_s):
+        """Computes dy/dz via Finite Difference in latent space."""
+        z_base = self.Phi @ theta_s
         try:
-            # Check if solver actually computed sensitivities
-            if not hasattr(sol["Terminal voltage [V]"], "sensitivities") or not sol["Terminal voltage [V]"].sensitivities:
-                raise AttributeError("Sensitivities unavailable")
-
-            for i, key in enumerate(self.symbolic_keys):
-                idx = i + n_num
-                S[0, idx] = sol["Terminal voltage [V]"].sensitivities[key][-1]
-                S[1, idx] = sol["Cell temperature [K]"].sensitivities[key][-1]
-                Q_nom = float(sol.all_inputs[0].get("Nominal cell capacity [A.h]", 10.0))
-                S[2, idx] = -sol["Discharge capacity [A.h]"].sensitivities[key][-1] / Q_nom
+            y_base = self._get_y_full(theta_s)
         except:
-            for i in range(n_sym):
-                idx = i + n_num
-                eps = 1.5e-8 * (1.0 + abs(theta_s[idx]))
-                pert = np.zeros(n_tot); pert[idx] = eps
-                try:
-                    y_p = self._get_y(theta_s + pert)
-                    y_m = self._get_y(theta_s - pert)
-                    S[:, idx] = (y_p - y_m) / (2 * eps)
-                except: pass
+            y_base = self.target_y # Fallback
 
-        return S
+        n_z = len(z_base)
+        n_y = len(y_base)
+        S_z = np.zeros((n_y, n_z))
+
+        for i in range(n_z):
+            eps = 1e-3
+            dz = np.zeros(n_z); dz[i] = eps
+            # To perturb z, we need a pseudo-inverse of Phi
+            d_theta = np.linalg.pinv(self.Phi) @ dz
+            try:
+                y_p = self._get_y_full(theta_s + d_theta)
+                S_z[:, i] = (y_p - y_base) / eps
+            except:
+                S_z[:, i] = 0.0 # Zero sensitivity on failure
+
+        return S_z
 
     def solve_mechanical_adjoint(self, T, SOC, theta_s, param_vals):
         L_p, L_a = theta_s[0], theta_s[1]

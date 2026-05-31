@@ -154,7 +154,7 @@ The BMS is designed as a high-fidelity algorithmic layer that manages the cell p
 
 **2.1 State Estimation Layer**
 The BMS implements real-time estimation of non-measurable internal states:
-*   **SOC Estimation (EKF):** An Extended Kalman Filter utilizes a nonlinear OCV-SOC mapping and a 2-RC equivalent circuit model to track charge levels across the 16-cell string.
+*   **SOC Estimation (UKF):** Joint estimation via Unscented Kalman Filter (UKF) utilizes a nonlinear OCV-SOC mapping and a 2-RC equivalent circuit model to track charge levels across the 16-cell string.
 *   **SOH Inference (RLS):** Recursive Least Squares (RLS) algorithms identify internal resistance growth ($R_0$ drift) to estimate capacity fade and power degradation.
 *   **Temperature Inference:** Distributed sensing combined with a lumped thermal observer provides core temperature estimates where direct sensing is unavailable.
 
@@ -172,7 +172,8 @@ The BMS regulates the current command ($I_{cmd}$) to maintain the pack within th
 
 **2.4 Control & Balancing Layer**
 *   **State Machine:** Deterministic management of Standby, Precharge, Run, and Fault states.
-*   **Cell Equalization:** SOC-based passive balancing using bleed resistors to minimize cell-to-cell dispersion during idle periods or low-current operation.
+*   **Cell Equalization:** SOC-based robust cell equalization using bleed resistors to minimize cell-to-cell dispersion during idle periods or low-current operation.
+*   **Adaptive MPC:** Operational regulation using adaptive Model Predictive Control to optimize performance across the operational envelope.
 
 3. RESEARCH SCOPE DECOMPOSITION
 This research maintains a clean separation between the physical plant and the control algorithms:

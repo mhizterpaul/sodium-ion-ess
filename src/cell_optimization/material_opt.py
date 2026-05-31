@@ -5,6 +5,7 @@ import math
 import logging
 from typing import List, Dict, Optional, Any
 from dataclasses import dataclass, field
+from src.cell_optimization.chem_regularization import compute_chemical_realization, derive_coupled_deltas
 
 try:
     import requests
@@ -44,6 +45,8 @@ class MaterialCandidate:
     properties: Dict[str, float]
     projected_delta: Dict[str, float] = field(default_factory=dict)
     confidence: float = 1.0
+    realization: float = 1.0
+    uncertainty: float = 0.0
     provenance: str = "OQMD"
 
     def to_pybamm_delta(self) -> Dict[str, Any]:
@@ -79,21 +82,14 @@ class PhysicsModels:
             return 3.2 * 0.8
 
     @staticmethod
-    def cathode_perturbation(electronic_anchor: Dict[str, float], structural_anchor: Dict[str, float], base_params: Any) -> Dict[str, float]:
-        s_thermo, s_kinetic = PhysicsModels.stability_decomposition(electronic_anchor)
-        realization = max(0.3, min(1.0, 1.0 / (1.0 + 15.0 * s_thermo)))
+    def cathode_perturbation(electronic_anchor: Dict[str, float], structural_anchor: Dict[str, float], base_params: Any, base_formula: str, proxy_formula: str) -> tuple[Dict[str, float], float]:
+        realization = compute_chemical_realization(base_formula, proxy_formula, structural_anchor, electronic_anchor)
 
         base_ocp = base_params["Positive electrode OCP [V]"]
         base_v = PhysicsModels.safe_ocp(base_ocp)
 
-        de_diff = electronic_anchor["formation_energy"] - structural_anchor["formation_energy"]
-        v_boost = -de_diff * 0.1 * (base_v / 3.2) * realization
-
-        vol_ratio = electronic_anchor["volume_per_atom"] / structural_anchor["volume_per_atom"]
-        d_mult = (1.0 + 0.4 * (vol_ratio - 1.0)) * realization
-        d_mult *= (1.0 / (1.0 + 0.1 * s_kinetic))
-
-        return {"voltage_boost": v_boost, "diffusivity_mult": max(0.2, d_mult)}
+        deltas = derive_coupled_deltas(structural_anchor, electronic_anchor, base_v, realization)
+        return deltas, realization
 
     @staticmethod
     def salt_dissociation(props: Dict[str, float], base_props: Dict[str, float]) -> Dict[str, float]:
@@ -156,12 +152,12 @@ class MaterialMappingEngine:
         required = ["stability", "formation_energy", "band_gap", "volume_per_atom"]
         return all(k in p and isinstance(p[k], (int, float)) for k in required)
 
-    def _resolve_material(self, formula: str, category_baseline: str) -> tuple[Dict[str, float], float, str]:
+    def _resolve_material(self, formula: str, category_baseline: str) -> tuple[Optional[Dict[str, float]], float, str]:
         cache_key = f"RESOLVE:{formula}:{CACHE_VERSION}"
         if cache_key in self.cache:
             return self.cache[cache_key]["props"], self.cache[cache_key]["conf"], self.cache[cache_key].get("source", "UNKNOWN")
 
-        props, conf, source = None, 0.0, "BASELINE"
+        props, conf, source = None, 0.0, "NONE"
 
         if self.session:
             try:
@@ -199,11 +195,7 @@ class MaterialMappingEngine:
             except Exception as e:
                 logging.warning(f"MP query failed for {formula}: {e}")
 
-        if not props:
-            props = CLASS_BASELINES.get(category_baseline, CLASS_BASELINES["Anode"])
-            conf, source = 0.2, "BASELINE"
-
-        if self._valid_props(props):
+        if props and self._valid_props(props):
             self.cache[cache_key] = {"props": props, "conf": conf, "source": source}
             self._save_cache()
 
@@ -217,21 +209,37 @@ class MaterialMappingEngine:
         base_cathode, _, _ = self._resolve_material(BASE_CATHODE_FORMULA, "Cathode")
         base_salt, _, _ = self._resolve_material(BASE_SALT_FORMULA, "Salt")
 
+        # Fallback to defaults if resolution fails for base materials
+        if not base_cathode:
+            base_cathode = {"stability": 0.05, "formation_energy": -2.1, "band_gap": 2.5, "volume_per_atom": 15.5}
+        if not base_salt:
+            base_salt = {"stability": 0.01, "formation_energy": -1.8, "band_gap": 5.0, "volume_per_atom": 25.0}
+
         dopant_proxies = {"Mn": "NaMnPO4", "Cr": "NaCrPO4", "Ni": "NaNiPO4"}
         for d, proxy_formula in dopant_proxies.items():
             electronic_anchor, conf, src = self._resolve_material(proxy_formula, "Cathode")
-            deltas = physics.cathode_perturbation(electronic_anchor, base_cathode, self.base_params)
-            system["Cathode_Dopant"].append(MaterialCandidate(d, "Cathode_Dopant", f"Doped-{d}-NFPP", electronic_anchor, deltas, conf, src))
+            if not electronic_anchor: continue
+            deltas, realization = physics.cathode_perturbation(electronic_anchor, base_cathode, self.base_params, BASE_CATHODE_FORMULA, proxy_formula)
+            system["Cathode_Dopant"].append(MaterialCandidate(
+                name=d, category="Cathode_Dopant", composition=f"Doped-{d}-NFPP",
+                properties=electronic_anchor, projected_delta=deltas, confidence=conf,
+                realization=realization, uncertainty=(1.0 - realization)**2, provenance=src))
 
         for name, formula in ALLOWED_SALTS.items():
             props, conf, src = self._resolve_material(formula, "Salt")
+            if not props: continue
             deltas = physics.salt_dissociation(props, base_salt)
-            system["Salt"].append(MaterialCandidate(name, "Salt", formula, props, deltas, conf, src))
+            system["Salt"].append(MaterialCandidate(
+                name=name, category="Salt", composition=formula, properties=props,
+                projected_delta=deltas, confidence=conf, realization=1.0, uncertainty=0.0, provenance=src))
 
         for name, formula in ALLOWED_FUNCTIONALIZATION.items():
             props, conf, src = self._resolve_material(formula, "Anode")
+            if not props: continue
             deltas = physics.anode_interface(props)
-            system["Functionalization"].append(MaterialCandidate(name, "Functionalization", formula, props, deltas, conf, src))
+            system["Functionalization"].append(MaterialCandidate(
+                name=name, category="Functionalization", composition=formula, properties=props,
+                projected_delta=deltas, confidence=conf, realization=1.0, uncertainty=0.0, provenance=src))
 
         return system
 

@@ -14,9 +14,10 @@ The plant environment represents the physical hardware and electrochemical dynam
 
 ### 2. Variable BMS Layer (Core Contribution)
 The primary research focus is the design and validation of a model-based Battery Management System:
-*   **State Estimation**: Extended Kalman Filter (EKF) for SOC tracking and Recursive Least Squares (RLS) for SOH/Impedance inference.
+*   **State Estimation**: Joint estimation via Unscented Kalman Filter (UKF) for SOC tracking and Recursive Least Squares (RLS) for SOH/Impedance inference.
 *   **Protection Logic**: Diagnostic hooks for voltage (OV/UV), temperature (OT), and abnormal impedance rise.
 *   **Safety Enforcement**: Multi-objective current arbitration with thermal and SOC-boundary derating.
+*   **Control & Balancing**: Deterministic state machine, robust cell equalization, and adaptive Model Predictive Control (MPC) for operational regulation.
 
 ### 3. Hierarchical Optimization (DSMO)
 A multi-stage framework for cell design enhancement:
