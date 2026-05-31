@@ -72,5 +72,41 @@
     },
     "conf": 1.0,
     "source": "OQMD"
+  },
+  "RESOLVE:NaCrPO4:v3": {
+    "props": {
+      "stability": 0.05229173814318111,
+      "formation_energy": -2.449203863940837,
+      "band_gap": 1.2839999999999998,
+      "volume_per_atom": 11.554857142857143,
+      "natoms": 14.0,
+      "uncertainty": 0.05
+    },
+    "conf": 1.0,
+    "source": "OQMD"
+  },
+  "RESOLVE:NaNiPO4:v3": {
+    "props": {
+      "stability": 0.0,
+      "formation_energy": -2.2411046913949,
+      "band_gap": 4.035,
+      "volume_per_atom": 11.927571428571428,
+      "natoms": 14.0,
+      "uncertainty": 0.05
+    },
+    "conf": 1.0,
+    "source": "OQMD"
+  },
+  "RESOLVE:C4BNaO8:v3": {
+    "props": {
+      "stability": 0.058015572709869,
+      "formation_energy": -1.66939695627726,
+      "band_gap": 3.509,
+      "volume_per_atom": 10.690428571428571,
+      "natoms": 28.0,
+      "uncertainty": 0.05
+    },
+    "conf": 1.0,
+    "source": "OQMD"
   }
 }
