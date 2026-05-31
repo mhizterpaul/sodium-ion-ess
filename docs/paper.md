@@ -172,7 +172,7 @@ The BMS regulates the current command ($I_{cmd}$) to maintain the pack within th
 
 **2.4 Control & Balancing Layer**
 *   **State Machine:** Deterministic management of Standby, Precharge, Run, and Fault states.
-*   **Cell Equalization:** SOC-based robust cell equalization using bleed resistors to minimize cell-to-cell dispersion during idle periods or low-current operation.
+*   **Cell Equalization:** Cell balancing using adaptive, SOH-aware equalization strategies to minimize cell-to-cell SOC dispersion and mitigate accelerated degradation under varying operating conditions.
 *   **Adaptive MPC:** Operational regulation using adaptive Model Predictive Control to optimize performance across the operational envelope.
 
 3. RESEARCH SCOPE DECOMPOSITION
