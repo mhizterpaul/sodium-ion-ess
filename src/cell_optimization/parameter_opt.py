@@ -18,8 +18,8 @@ except ImportError:
 class DSMOptimizer:
     """
     Two-Timescale Differentiable Sensitivity Manifold Optimizer (DSMO).
-    Outer loop: Categorical Material Selection.
-    Inner loop: Continuous Structural Parameter Optimization.
+    Outer loop: Categorical Material Selection via Discrete Expected Improvement.
+    Inner loop: Continuous Structural Parameter Optimization via Reduced Jacobian.
     """
     def __init__(self, target_y=None):
         self.target_y = target_y if target_y is not None else np.array([3.3, 298.15, 0.5, 1e-8])
@@ -55,11 +55,10 @@ class DSMOptimizer:
         self.theta_structural = np.array([1.2e-4, 1.2e-4, 1e-6, 0.3, 0.3, 0.5, 1.5, 0.65, 0.65, 1000.0])
 
         # Latent Mapping Phi (4 latent factors: transport, electrochemical, thermal, mechanical)
-        # Columns: [Lp, Ln, rp, eps_p, eps_n, eps_sep, brugg_e, am_p, am_n, c_e_typ]
         self.Phi = np.zeros((4, 10))
         self.Phi[0, [2, 3, 4, 6]] = [1.0, 1.0, 1.0, 0.5]  # Transport
         self.Phi[1, [7, 8, 9]] = [1.0, 1.0, 0.5]         # Electrochemical
-        self.Phi[2, [0, 1, 3, 4]] = [0.2, 0.2, 0.5, 0.5] # Thermal (volume/density)
+        self.Phi[2, [0, 1, 3, 4]] = [0.2, 0.2, 0.5, 0.5] # Thermal
         self.Phi[3, [0, 1, 2]] = [1.0, 1.0, 0.5]         # Mechanical
 
     def apply_material_logic(self, param_vals):
@@ -103,13 +102,12 @@ class DSMOptimizer:
         param_vals["Current function [A]"] = 10.0
 
         model = pybamm.lithium_ion.DFN()
-        # Use more robust solver settings
         solver = pybamm.CasadiSolver(mode="safe", extra_options_setup={"max_num_steps": 1000})
         sim = pybamm.Simulation(model, parameter_values=param_vals, solver=solver)
         return sim
 
     def run(self):
-        print(f"Starting Robust Hybrid DSMO Optimization with Reduced Jacobian...")
+        print(f"Starting Discrete Material-Design Jacobian Optimization...")
         theta_s = self.theta_structural
 
         for epoch in range(self.max_epochs):
@@ -133,30 +131,32 @@ class DSMOptimizer:
                     Q_nom = float(sim.parameter_values["Nominal cell capacity [A.h]"])
                     SOC_val = 1.0 - (float(np.array(sol["Discharge capacity [A.h]"].entries).flatten()[-1]) / Q_nom)
                 except:
-                    # Fallback values if simulation fails
                     V_val, T_val, SOC_val = 2.0, 310.0, 0.0
 
                 eps_val, S_mech_row = self.solve_mechanical_adjoint(T_val, SOC_val, theta_s, sim.parameter_values)
                 y = np.array([V_val, T_val, SOC_val, eps_val])
 
-                # Reduced Jacobian Approach
-                # J = (dy/dz) * (dz/dtheta) where z = Phi * theta
-                # Here we compute dy/dz via FD in latent space
+                # 1. Structural Jacobian (Reduced)
                 S_reduced = self._compute_reduced_jacobian(theta_s)
-                S = S_reduced @ self.Phi # (4, 4) @ (4, 10) -> (4, 10)
+                S_theta = S_reduced @ self.Phi
 
-                S = S / self.y_scale[:, None]
+                # 2. Material Candidate Evaluation (Explicit Performance Jump Matrix)
+                Y_m = self._evaluate_material_candidates(theta_s)
+
+                S_theta = S_theta / self.y_scale[:, None]
                 r = (y - self.target_y) / self.y_scale
 
-                scale = np.linalg.norm(S, ord=2)
-                # Weighted update: G = S^T S + lambda*I + Sigma_proxy
-                G = S.T @ S + (self.lam + 1e-3 * scale**2 + sigma_proxy) * np.eye(len(theta_s))
-                update = np.linalg.solve(G, S.T @ r)
+                scale = np.linalg.norm(S_theta, ord=2)
+                G = S_theta.T @ S_theta + (self.lam + 1e-3 * scale**2 + sigma_proxy) * np.eye(len(theta_s))
+                update = np.linalg.solve(G, S_theta.T @ r)
                 theta_s = theta_s - self.lr * update
 
                 theta_s = np.clip(theta_s,
                                   [5e-5, 5e-5, 1e-7, 0.1, 0.1, 0.2, 1.0, 0.4, 0.4, 500.0],
                                   [3e-4, 3e-4, 1e-5, 0.6, 0.6, 0.8, 3.0, 0.8, 0.8, 2000.0])
+
+                # 3. Discrete Material Selection (Residual Minimization)
+                self._discrete_material_selection(Y_m)
 
                 print(f"  Iteration {epoch}.{k}: Residual Norm = {np.linalg.norm(r):.4f}")
 
@@ -180,7 +180,7 @@ class DSMOptimizer:
         try:
             y_base = self._get_y_full(theta_s)
         except:
-            y_base = self.target_y # Fallback
+            y_base = self.target_y
 
         n_z = len(z_base)
         n_y = len(y_base)
@@ -189,15 +189,58 @@ class DSMOptimizer:
         for i in range(n_z):
             eps = 1e-3
             dz = np.zeros(n_z); dz[i] = eps
-            # To perturb z, we need a pseudo-inverse of Phi
             d_theta = np.linalg.pinv(self.Phi) @ dz
             try:
                 y_p = self._get_y_full(theta_s + d_theta)
                 S_z[:, i] = (y_p - y_base) / eps
             except:
-                S_z[:, i] = 0.0 # Zero sensitivity on failure
+                S_z[:, i] = 0.0
 
         return S_z
+
+    def _evaluate_material_candidates(self, theta_s):
+        """Evaluates y for all discrete material candidates."""
+        dopants = self.material_data.get("Cathode_Dopant", [])
+        salts = self.material_data.get("Salt", [])
+
+        Y_m = {"dopants": [], "salts": [], "mtms": []}
+
+        orig_d = self.selected_dopant_idx
+        for i in range(len(dopants)):
+            self.selected_dopant_idx = i
+            Y_m["dopants"].append(self._get_y_full(theta_s))
+        self.selected_dopant_idx = orig_d
+
+        orig_s = self.selected_salt_idx
+        for i in range(len(salts)):
+            self.selected_salt_idx = i
+            Y_m["salts"].append(self._get_y_full(theta_s))
+        self.selected_salt_idx = orig_s
+
+        orig_m = self.mtms_enabled
+        for m in [0.0, 1.0]:
+            self.mtms_enabled = m
+            Y_m["mtms"].append(self._get_y_full(theta_s))
+        self.mtms_enabled = orig_m
+
+        return Y_m
+
+    def _discrete_material_selection(self, Y_m):
+        """Discrete selection using residual minimization."""
+        def calc_res(y):
+            return np.linalg.norm((y - self.target_y) / self.y_scale)
+
+        if Y_m["dopants"]:
+            res = [calc_res(y) for y in Y_m["dopants"]]
+            self.selected_dopant_idx = int(np.argmin(res))
+
+        if Y_m["salts"]:
+            res = [calc_res(y) for y in Y_m["salts"]]
+            self.selected_salt_idx = int(np.argmin(res))
+
+        if Y_m["mtms"]:
+            res = [calc_res(y) for y in Y_m["mtms"]]
+            self.mtms_enabled = 1.0 if np.argmin(res) == 1 else 0.0
 
     def solve_mechanical_adjoint(self, T, SOC, theta_s, param_vals):
         L_p, L_a = theta_s[0], theta_s[1]

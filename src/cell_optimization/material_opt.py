@@ -215,14 +215,33 @@ class MaterialMappingEngine:
         if not base_salt:
             base_salt = {"stability": 0.01, "formation_energy": -1.8, "band_gap": 5.0, "volume_per_atom": 25.0}
 
-        dopant_proxies = {"Mn": "NaMnPO4", "Cr": "NaCrPO4", "Ni": "NaNiPO4"}
+        # Exact doped variants for direct dP/dx estimation
+        dopant_proxies = {
+            "Mn": "Na4Fe2.7Mn0.3P4O15",
+            "Cr": "Na4Fe2.7Cr0.3P4O15",
+            "Ni": "Na4Fe2.7Ni0.3P4O15"
+        }
         for d, proxy_formula in dopant_proxies.items():
-            electronic_anchor, conf, src = self._resolve_material(proxy_formula, "Cathode")
-            if not electronic_anchor: continue
-            deltas, realization = physics.cathode_perturbation(electronic_anchor, base_cathode, self.base_params, BASE_CATHODE_FORMULA, proxy_formula)
+            proxy_props, conf, src = self._resolve_material(proxy_formula, "Cathode")
+
+            # Fallback to simple phosphate only if exact variant is missing
+            if not proxy_props:
+                fallback_formula = f"Na{d}PO4"
+                proxy_props, conf, src = self._resolve_material(fallback_formula, "Cathode")
+
+            if not proxy_props: continue
+
+            deltas, realization = physics.cathode_perturbation(proxy_props, base_cathode, self.base_params, BASE_CATHODE_FORMULA, proxy_formula)
+
+            # Transfer Learning Logic: p_corrected = p_base + R * (p_proxy - p_base)
+            corrected_props = {
+                k: base_cathode[k] + realization * (proxy_props[k] - base_cathode[k])
+                for k in base_cathode if k in proxy_props
+            }
+
             system["Cathode_Dopant"].append(MaterialCandidate(
-                name=d, category="Cathode_Dopant", composition=f"Doped-{d}-NFPP",
-                properties=electronic_anchor, projected_delta=deltas, confidence=conf,
+                name=d, category="Cathode_Dopant", composition=proxy_formula,
+                properties=corrected_props, projected_delta=deltas, confidence=conf,
                 realization=realization, uncertainty=(1.0 - realization)**2, provenance=src))
 
         for name, formula in ALLOWED_SALTS.items():
