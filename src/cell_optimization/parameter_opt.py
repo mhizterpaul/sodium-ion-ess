@@ -20,8 +20,10 @@ except ImportError:
     dolfinx = None
 
 def softmax(x, beta=1.0):
-    """Numerically stable softmax."""
+    """Numerically stable softmax with clipping."""
+    x = np.array(x, dtype=np.float64)
     x = beta * (x - np.max(x))
+    x = np.clip(x, -50, 50)
     e = np.exp(x)
     return e / (np.sum(e) + 1e-12)
 
@@ -150,6 +152,28 @@ class DSMOptimizer:
         sim = pybamm.Simulation(model, parameter_values=params, solver=solver)
         return sim
 
+    def _get_y_pure(self, th, d_idx, s_idx, mtms, horizon=600):
+        """Deterministic evaluation with stable caching and robust exception handling."""
+        state_hash = hash((stable_hash(th), d_idx, s_idx, mtms, horizon))
+        if state_hash in self.solve_cache: return self.solve_cache[state_hash]
+
+        sim = self.setup_sim(th, d_idx, s_idx, mtms)
+        try:
+            sl = sim.solve([0, horizon], inputs={"Current [A]": 10.0})
+            v = float(np.array(sl["Terminal voltage [V]"].entries).flatten()[-1])
+            t = float(np.array(sl["Cell temperature [K]"].entries).flatten()[-1])
+            q = float(sim.parameter_values["Nominal cell capacity [A.h]"])
+            soc = 1.0 - (float(np.array(sl["Discharge capacity [A.h]"].entries).flatten()[-1]) / q)
+            c_s_avg = float(np.mean(sl["X-averaged negative particle concentration [mol.m-3]"].entries))
+            eps_val = self.solve_reduced_mechanics(t, c_s_avg, th, sim.parameter_values)
+
+            res = np.array([v, t, soc, eps_val])
+            self.solve_cache[state_hash] = res
+            return res
+        except Exception as e:
+            logging.warning(f"Simulation failed: {str(e)}")
+            return np.array(self.target_y)
+
     def run(self):
         print(f"Starting Stable Riemannian DSMO Optimization...")
         theta_s = self.theta_structural
@@ -199,9 +223,15 @@ class DSMOptimizer:
         return {"structural_design": theta_s.tolist()}
 
     def _project_physical_manifold(self, theta):
-        """Enforces physical feasibility constraints."""
+        """Enforces physical feasibility constraints including N/P ratio penalty logic."""
         theta[3:6] = np.clip(theta[3:6], 0.2, 0.7)
         theta[7:9] = np.clip(theta[7:9], 0.4, 0.9)
+
+        # Approximate capacity ratio correction (Qn/Qp)
+        capacity_ratio = (theta[8] * theta[1]) / (theta[7] * theta[0] + 1e-9)
+        # Instead of projection, we use a smooth adjustment toward ratio=1
+        theta[1] = theta[1] / (capacity_ratio + 1e-9)
+
         return np.clip(theta,
                        [5e-5, 5e-5, 1e-7, 0.2, 0.2, 0.2, 1.0, 0.4, 0.4, 500.0],
                        [3e-4, 3e-4, 1e-5, 0.7, 0.7, 0.7, 3.0, 0.9, 0.9, 2000.0])
@@ -210,29 +240,9 @@ class DSMOptimizer:
         assert np.all(np.isfinite(y)), "Non-finite outputs."
         assert np.all(np.isfinite(theta)), "Non-finite parameters."
 
-    def _get_y_pure(self, th, d_idx, s_idx, mtms, horizon=600):
-        """Deterministic evaluation with stable caching."""
-        state_hash = hash((stable_hash(th), d_idx, s_idx, mtms, horizon))
-        if state_hash in self.solve_cache: return self.solve_cache[state_hash]
-
-        sim = self.setup_sim(th, d_idx, s_idx, mtms)
-        try:
-            sl = sim.solve([0, horizon])
-            v = float(np.array(sl["Terminal voltage [V]"].entries).flatten()[-1])
-            t = float(np.array(sl["Cell temperature [K]"].entries).flatten()[-1])
-            q = float(sim.parameter_values["Nominal cell capacity [A.h]"])
-            soc = 1.0 - (float(np.array(sl["Discharge capacity [A.h]"].entries).flatten()[-1]) / q)
-            c_s_avg = float(np.mean(sl["X-averaged negative particle concentration [mol.m-3]"].entries))
-            eps_val = self.solve_reduced_mechanics(t, c_s_avg, th, sim.parameter_values)
-
-            res = np.array([v, t, soc, eps_val])
-            self.solve_cache[state_hash] = res
-            return res
-        except:
-            return self.target_y
 
     def _compute_reduced_jacobian(self, theta_s):
-        """Stable structured finite-difference Jacobian."""
+        """Stable structured finite-difference Jacobian with orthonormal projection."""
         n_z = 4
         S_z = np.zeros((4, n_z))
         eps = 5e-4
@@ -242,9 +252,22 @@ class DSMOptimizer:
         for i in range(n_z):
             d_theta = np.zeros_like(theta_s)
             _, idxs, w = self.Phi_blocks[i]
-            w = w / (np.linalg.norm(w) + 1e-9)
 
-            # Consistent directional lift
+            # Orthonormal projection for directional consistency
+            w = w / (np.linalg.norm(w) + 1e-9)
+            # Orthogonalize against previous blocks to prevent bias
+            for j in range(i):
+                prev_w = self.Phi_blocks[j][2]
+                prev_idxs = self.Phi_blocks[j][1]
+                # Map back to full space for dot product
+                w_full = np.zeros(10); w_full[idxs] = w
+                prev_full = np.zeros(10); prev_full[prev_idxs] = prev_w / (np.linalg.norm(prev_w) + 1e-9)
+                w_full = w_full - np.dot(w_full, prev_full) * prev_full
+                w_new = w_full[idxs]
+                if np.linalg.norm(w_new) > 1e-6:
+                    w = w_new
+
+            w = w / (np.linalg.norm(w) + 1e-9)
             d_theta[idxs] = eps * w
 
             y_plus = self._get_y_pure(theta_s + d_theta, self.selected_dopant_idx, self.selected_salt_idx, self.mtms_enabled, horizon=600)

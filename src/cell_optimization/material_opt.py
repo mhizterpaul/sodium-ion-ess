@@ -164,7 +164,13 @@ class MaterialMappingEngine:
 
     def _valid_props(self, p: Dict[str, Any]) -> bool:
         required = ["stability", "formation_energy", "band_gap", "volume_per_atom"]
-        return all(k in p and isinstance(p[k], (int, float)) for k in required)
+        for k in required:
+            if k not in p: return False
+            try:
+                v = float(p[k])
+            except: return False
+            if not np.isfinite(v): return False
+        return True
 
     def _resolve_material(self, formula: str, category_baseline: str) -> tuple[Optional[Dict[str, float]], float, str]:
         cache_key = f"RESOLVE:{formula}:{CACHE_VERSION}"
@@ -266,9 +272,11 @@ class MaterialMappingEngine:
             w_p = 1.0 / (u_proxy + 1e-6)
             w_b = 1.0 / (u_base + 1e-6)
 
+            common_keys = set(proxy_props.keys()) & set(base_cathode.keys())
             corrected_props = {
                 k: (w_p * proxy_props[k] + w_b * base_cathode[k]) / (w_p + w_b)
-                for k in base_cathode if k in proxy_props
+                for k in common_keys
+                if np.isfinite(proxy_props[k]) and np.isfinite(base_cathode[k])
             }
 
             system["Cathode_Dopant"].append(MaterialCandidate(
