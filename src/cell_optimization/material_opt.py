@@ -2,6 +2,7 @@ import json
 import os
 import re
 import math
+import numpy as np
 import logging
 from typing import List, Dict, Optional, Any
 from dataclasses import dataclass, field
@@ -37,24 +38,30 @@ KT = 0.0259 # eV at 300K
 
 
 
+REQUIRED_CHANNELS = {"thermodynamic", "kinetic", "transport", "structural"}
+
 @dataclass
 class MaterialCandidate:
     name: str
     category: str
     composition: str
     properties: Dict[str, float]
-    projected_delta: Dict[str, float] = field(default_factory=dict)
+    projected_delta: Dict[str, Any] = field(default_factory=dict)
     confidence: float = 1.0
     realization: float = 1.0
     uncertainty: float = 0.0
     provenance: str = "OQMD"
 
     def __post_init__(self):
-        """Schema guard for projected_delta."""
-        required_channels = {"thermodynamic", "kinetic", "transport", "structural"}
+        """Strict schema validation for projected_delta."""
         if self.category == "Cathode_Dopant":
-            if not isinstance(self.projected_delta, dict) or not required_channels.issubset(self.projected_delta.keys()):
-                logging.warning(f"MaterialCandidate {self.name} missing required physics channels in projected_delta.")
+            is_valid = (
+                isinstance(self.projected_delta, dict)
+                and REQUIRED_CHANNELS.issubset(self.projected_delta.keys())
+                and all(isinstance(self.projected_delta[k], dict) for k in REQUIRED_CHANNELS)
+            )
+            if not is_valid:
+                logging.error(f"MaterialCandidate {self.name} has malformed projected_delta schema.")
 
     def to_pybamm_delta(self) -> Dict[str, Any]:
         """Maps derived deltas to PyBaMM parameter names."""
@@ -99,14 +106,15 @@ class PhysicsModels:
         return deltas, realization
 
     @staticmethod
-    def salt_dissociation(props: Dict[str, float], base_props: Dict[str, float]) -> Dict[str, float]:
+    def salt_dissociation(props: Dict[str, float], base_props: Dict[str, float]) -> Dict[str, Any]:
         # Refined salt model using dissociation energy proxies
         s_thermo, _ = PhysicsModels.stability_decomposition(props)
         s_base_thermo, _ = PhysicsModels.stability_decomposition(base_props)
 
         # Conductivity proxy: sigma ~ exp(-dEf/kT)
+        # Use clipped exponent to prevent instability at small KT
         ef_diff = props["formation_energy"] - base_props["formation_energy"]
-        sigma_mult = math.exp(-ef_diff / (2 * KT))
+        sigma_mult = math.exp(np.clip(-ef_diff / (2 * KT), -10, 10))
         sigma_mult = min(max(sigma_mult, 0.1), 10.0)
 
         # Dissociation effect: sigmoid relative to NaPF6 stability

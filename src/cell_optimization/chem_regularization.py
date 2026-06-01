@@ -79,11 +79,12 @@ def derive_coupled_deltas(base_props: Dict[str, float],
         },
         "kinetic": {
             # ln(i0/i0_ref) proportional to dEf/dEg mismatch
-            "reaction_rate_log_delta": (0.1 * dy[0] - 0.2 * dy[2]) * realization
+    # Clipped to prevent exponential explosion
+    "reaction_rate_log_delta": np.clip((0.1 * dy[0] - 0.2 * dy[2]) * realization, -5, 5)
         },
         "transport": {
             # ln(D/D0) proportional to volume and electronic distances
-            "diffusivity_log_delta": (1.2 * dy[1] - 0.5 * dy[2]) * realization
+    "diffusivity_log_delta": np.clip((1.2 * dy[1] - 0.5 * dy[2]) * realization, -5, 5)
         },
         "structural": {
             "volume_expansion_coeff": dy[1] * realization
