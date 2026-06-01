@@ -53,15 +53,14 @@ class MaterialCandidate:
     provenance: str = "OQMD"
 
     def __post_init__(self):
-        """Strict schema validation for projected_delta."""
-        if self.category == "Cathode_Dopant":
-            is_valid = (
-                isinstance(self.projected_delta, dict)
-                and REQUIRED_CHANNELS.issubset(self.projected_delta.keys())
-                and all(isinstance(self.projected_delta[k], dict) for k in REQUIRED_CHANNELS)
-            )
-            if not is_valid:
-                logging.error(f"MaterialCandidate {self.name} has malformed projected_delta schema.")
+        """Strict schema validation for projected_delta across all categories."""
+        is_valid = (
+            isinstance(self.projected_delta, dict)
+            and REQUIRED_CHANNELS.issubset(self.projected_delta.keys())
+            and all(isinstance(self.projected_delta[k], dict) for k in REQUIRED_CHANNELS)
+        )
+        if not is_valid:
+            logging.error(f"MaterialCandidate {self.name} ({self.category}) has malformed projected_delta schema.")
 
     def to_pybamm_delta(self) -> Dict[str, Any]:
         """Maps derived deltas to PyBaMM parameter names."""
@@ -96,44 +95,53 @@ class PhysicsModels:
             return 3.2 * 0.8
 
     @staticmethod
-    def cathode_perturbation(electronic_anchor: Dict[str, float], structural_anchor: Dict[str, float], base_params: Any, base_formula: str, proxy_formula: str) -> tuple[Dict[str, float], float]:
-        realization = compute_chemical_realization(base_formula, proxy_formula, structural_anchor, electronic_anchor)
+    def cathode_perturbation(proxy_props: Dict[str, float], base_props: Dict[str, float], base_params: Any, base_formula: str, proxy_formula: str) -> tuple[Dict[str, Any], float]:
+        """Calculates cathode deltas with semantically correct anchor naming."""
+        realization = compute_chemical_realization(base_formula, proxy_formula, base_props, proxy_props)
 
         base_ocp = base_params["Positive electrode OCP [V]"]
         base_v = PhysicsModels.safe_ocp(base_ocp)
 
-        deltas = derive_coupled_deltas(structural_anchor, electronic_anchor, base_v, realization)
+        deltas = derive_coupled_deltas(base_props, proxy_props, base_v, realization)
         return deltas, realization
 
     @staticmethod
     def salt_dissociation(props: Dict[str, float], base_props: Dict[str, float]) -> Dict[str, Any]:
-        # Refined salt model using dissociation energy proxies
+        """Refined salt model returning structured channels."""
         s_thermo, _ = PhysicsModels.stability_decomposition(props)
         s_base_thermo, _ = PhysicsModels.stability_decomposition(base_props)
 
-        # Conductivity proxy: sigma ~ exp(-dEf/kT)
-        # Use clipped exponent to prevent instability at small KT
         ef_diff = props["formation_energy"] - base_props["formation_energy"]
         sigma_mult = math.exp(np.clip(-ef_diff / (2 * KT), -10, 10))
         sigma_mult = min(max(sigma_mult, 0.1), 10.0)
 
-        # Dissociation effect: sigmoid relative to NaPF6 stability
         delta_s = s_thermo - s_base_thermo
-        dissociation = 1.0 / (1.0 + math.exp(25.0 * delta_s))
+        dissociation = 1.0 / (1.0 + math.exp(np.clip(25.0 * delta_s, -20, 20)))
 
         return {
-            "conductivity_mult": sigma_mult * dissociation,
-            "ion_transference_mult": 1.0 + (0.15 * dissociation)
+            "thermodynamic": {"stability_shift": delta_s},
+            "kinetic": {},
+            "transport": {
+                "conductivity_mult": sigma_mult * dissociation,
+                "ion_transference_mult": 1.0 + (0.15 * dissociation)
+            },
+            "structural": {}
         }
 
     @staticmethod
-    def anode_interface(props: Dict[str, float]) -> Dict[str, float]:
+    def anode_interface(props: Dict[str, float]) -> Dict[str, Any]:
+        """Anode functionalization model returning structured channels."""
         s_thermo, _ = PhysicsModels.stability_decomposition(props)
-        sei_growth = 0.5 + 0.5 * math.exp(-s_thermo * 8.0)
-        r_sei = 1.0 + 0.4 * (1.0 - math.exp(-s_thermo))
-        loss = 0.7 + 0.3 * (1.0 - math.exp(-s_thermo))
+        sei_growth = 0.5 + 0.5 * math.exp(np.clip(-s_thermo * 8.0, -20, 20))
+        r_sei = 1.0 + 0.4 * (1.0 - math.exp(np.clip(-s_thermo, -20, 20)))
+        loss = 0.7 + 0.3 * (1.0 - math.exp(np.clip(-s_thermo, -20, 20)))
 
-        return {"sei_growth_mult": sei_growth, "resistance_drift_mult": r_sei, "initial_loss_mult": loss}
+        return {
+            "thermodynamic": {"initial_loss_mult": loss},
+            "kinetic": {"sei_growth_mult": sei_growth},
+            "transport": {"resistance_drift_mult": r_sei},
+            "structural": {}
+        }
 
 class MaterialMappingEngine:
     def __init__(self):
@@ -269,8 +277,9 @@ class MaterialMappingEngine:
             u_proxy = proxy_props.get("uncertainty", 0.1)
             u_base = base_cathode.get("uncertainty", 0.05)
 
-            w_p = 1.0 / (u_proxy + 1e-6)
-            w_b = 1.0 / (u_base + 1e-6)
+            # True inverse variance weighting (w = 1 / uncertainty**2)
+            w_p = 1.0 / (u_proxy**2 + 1e-6)
+            w_b = 1.0 / (u_base**2 + 1e-6)
 
             common_keys = set(proxy_props.keys()) & set(base_cathode.keys())
             corrected_props = {

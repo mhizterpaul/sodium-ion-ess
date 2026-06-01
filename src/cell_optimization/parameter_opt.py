@@ -129,14 +129,29 @@ class DSMOptimizer:
             kt = channels.get("kinetic", {})
             tr = channels.get("transport", {})
 
+            # --- Thermodynamic Channel ---
             if "voltage_boost" in td:
                 transform.add_additive("Positive electrode OCP [V]", td["voltage_boost"] * alpha)
+            if "initial_loss_mult" in td:
+                transform.add_multiplier("Initial concentration in negative electrode [mol.m-3]", td["initial_loss_mult"])
+
+            # --- Kinetic Channel ---
             if "reaction_rate_log_delta" in kt:
                 m = math.exp(np.clip(kt["reaction_rate_log_delta"] * alpha, -5, 5))
                 transform.add_multiplier("Positive electrode exchange-current density [A.m-2]", m)
+            if "sei_growth_mult" in kt:
+                transform.add_multiplier("SEI reaction exchange current density [A.m-2]", kt["sei_growth_mult"])
+
+            # --- Transport Channel ---
             if "diffusivity_log_delta" in tr:
                 m = math.exp(np.clip(tr["diffusivity_log_delta"] * alpha, -5, 5))
                 transform.add_multiplier("Positive particle diffusivity [m2.s-1]", m)
+            if "conductivity_mult" in tr:
+                transform.add_multiplier("Electrolyte conductivity [S.m-1]", tr["conductivity_mult"])
+            if "ion_transference_mult" in tr:
+                transform.add_multiplier("Cation transference number", tr["ion_transference_mult"])
+            if "resistance_drift_mult" in tr:
+                transform.add_multiplier("SEI resistivity [Ohm.m]", tr["resistance_drift_mult"])
 
         if dopants: apply_channels(dopants[dopant_idx])
         if salts: apply_channels(salts[salt_idx])
