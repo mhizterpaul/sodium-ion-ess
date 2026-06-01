@@ -211,6 +211,13 @@ class DSMOptimizer:
                 G += 0.05 * u * np.eye(G.shape[0])
 
                 update = np.linalg.solve(G, S_norm.T @ r)
+
+                # Trust-Region Step Clamping
+                update_norm = np.linalg.norm(update)
+                max_step = 0.1
+                if update_norm > max_step:
+                    update *= max_step / update_norm
+
                 theta_s = theta_s - self.lr * update
 
                 # 4. Physical Manifold Projection
@@ -223,14 +230,15 @@ class DSMOptimizer:
         return {"structural_design": theta_s.tolist()}
 
     def _project_physical_manifold(self, theta):
-        """Enforces physical feasibility constraints including N/P ratio penalty logic."""
+        """Enforces physical feasibility constraints including smooth N/P ratio adjustment."""
         theta[3:6] = np.clip(theta[3:6], 0.2, 0.7)
         theta[7:9] = np.clip(theta[7:9], 0.4, 0.9)
 
-        # Approximate capacity ratio correction (Qn/Qp)
+        # Smooth Differentiable N/P Capacity Ratio Adjustment (Target=1.05 for safety margin)
         capacity_ratio = (theta[8] * theta[1]) / (theta[7] * theta[0] + 1e-9)
-        # Instead of projection, we use a smooth adjustment toward ratio=1
-        theta[1] = theta[1] / (capacity_ratio + 1e-9)
+        target_ratio = 1.05
+        # Adaptive log-adjustment prevents discontinuous jumps
+        theta[1] *= np.exp(0.1 * np.log(target_ratio / (capacity_ratio + 1e-9)))
 
         return np.clip(theta,
                        [5e-5, 5e-5, 1e-7, 0.2, 0.2, 0.2, 1.0, 0.4, 0.4, 500.0],
@@ -286,12 +294,21 @@ class DSMOptimizer:
         if dopants:
             scs = np.array([score(self._get_y_pure(theta_s, i, self.selected_salt_idx, self.mtms_enabled), dopants[i].uncertainty)
                    for i in range(len(dopants))])
-            self.selected_dopant_idx = int(np.random.choice(len(scs), p=softmax(scs, beta=beta)))
+            p = softmax(scs, beta=beta)
+            # Deterministic convergence late in annealing stage
+            if beta > 10.0:
+                self.selected_dopant_idx = int(np.argmax(p))
+            else:
+                self.selected_dopant_idx = int(np.random.choice(len(p), p=p))
 
         if salts:
             scs = np.array([score(self._get_y_pure(theta_s, self.selected_dopant_idx, i, self.mtms_enabled), salts[i].uncertainty)
                    for i in range(len(salts))])
-            self.selected_salt_idx = int(np.random.choice(len(scs), p=softmax(scs, beta=beta)))
+            p = softmax(scs, beta=beta)
+            if beta > 10.0:
+                self.selected_salt_idx = int(np.argmax(p))
+            else:
+                self.selected_salt_idx = int(np.random.choice(len(p), p=p))
 
     def solve_reduced_mechanics(self, T, c_s_avg, theta_s, param_vals):
         """Physics-consistent reduced mechanics model."""

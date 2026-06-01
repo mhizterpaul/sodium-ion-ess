@@ -70,44 +70,49 @@ def derive_coupled_deltas(
     realization: float
 ) -> Dict[str, Dict[str, float]]:
     """
-    Physically constrained channel model with linear coupling matrix.
+    Metric-aligned channel model with magnitude preservation.
     """
 
-    # --- normalized latent vector ---
-    z = np.array([
+    # --- raw latent vector ---
+    z_raw = np.array([
         proxy_props["formation_energy"] - base_props["formation_energy"],
         proxy_props["volume_per_atom"] - base_props["volume_per_atom"],
         proxy_props["band_gap"] - base_props["band_gap"],
         proxy_props["stability"] - base_props["stability"]
+    ], dtype=float)
+
+    # characteristic property scales (preserves relative magnitude)
+    z_scale = np.array([
+        1.0,   # eV (formation energy)
+        10.0,  # Å³/atom (volume)
+        3.0,   # eV (bandgap)
+        0.5    # eV/atom above hull (stability)
     ])
 
-    # normalize vector (critical stability fix)
-    z = z / (np.linalg.norm(z) + 1e-9)
+    # bounded magnitude preservation via tanh
+    z = np.tanh(z_raw / z_scale)
 
-    # linear coupling matrix (replaces ad-hoc scalars)
-    W = np.array([
-        [ 1.2,  0.3, -0.2,  0.5],
-        [-0.4,  1.0,  0.2, -0.1],
-        [ 0.1, -0.3,  1.1,  0.0],
-        [ 0.0,  0.2, -0.1,  1.3]
-    ])
+    # metric-aligned coupling matrix (W = sqrt(Gz))
+    # Aligns chemistry perturbations with the Riemannian manifold curvature
+    W = np.sqrt(GZ_METRIC)
 
     dy = W @ z
 
     scale = float(realization)
-
     def clip(x): return float(np.tanh(x))
 
     return {
         "thermodynamic": {
-            "voltage_boost": clip(dy[0]) * scale,
+            "voltage_boost": clip(-dy[0]) * scale * 0.05, # scaled for OCP shift
             "stability_shift": clip(dy[3]) * scale
         },
         "kinetic": {
-            "reaction_rate_log_delta": clip(dy[1] - 0.5 * dy[2]) * scale
+            # reaction kinetics coupled to energetic and electronic shifts
+            "reaction_rate_log_delta": clip(0.1 * dy[0] - 0.2 * dy[2]) * scale
         },
         "transport": {
-            "diffusivity_log_delta": clip(dy[2] - 0.3 * dy[1]) * scale
+            # diffusivity coupled to structural and electronic shifts
+            "diffusivity_log_delta": clip(1.0 * dy[1] - 0.3 * dy[2]) * scale
         },
         "structural": {
             "volume_expansion_coeff": clip(dy[1]) * scale
