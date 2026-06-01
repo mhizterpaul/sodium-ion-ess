@@ -5,6 +5,7 @@ import math
 import logging
 from copy import deepcopy
 from functools import lru_cache
+from typing import Dict, Set, List, Optional, Any
 from nfpp_sodium_ion.src.cell_parameters.cell_alpha import get_parameter_values
 from src.cell_optimization.material_opt import MaterialMappingEngine
 from src.cell_optimization.chem_regularization import GZ_METRIC
@@ -29,7 +30,7 @@ def softmax(x, beta=1.0):
 
 def stable_hash(theta):
     """Mathematically robust hash for float arrays."""
-    return hash(np.round(theta, 6).tobytes())
+    return hash(theta.round(8).tobytes())
 
 class ParamTransform:
     """Pure parameter wrapper to prevent dictionary mutation leakage."""
@@ -63,6 +64,7 @@ class ParamTransform:
 class DSMOptimizer:
     """
     Riemannian Control Manifold Optimizer for Coupled Electrochemical-Mechanical State Space.
+    Calibration-driven via high-fidelity DFN sensitivity.
     """
     def __init__(self, target_y=None):
         # Physically Grounded Operating Point and Scaling
@@ -108,6 +110,56 @@ class DSMOptimizer:
             self.Phi[block_idx, indices] = weights
 
         self.solve_cache = {}
+        self.W_coupling = None
+        self.Gz_calibrated = None
+
+    def _calibrate_physics_manifold(self):
+        """Calibrates latent metric Gz and coupling matrix W using high-fidelity DFN sensitivity."""
+        print("Calibrating Physics Manifold via DFN sensitivity...")
+        # 1. Initialization
+        self.material_data = self.engine.run()
+        theta = self.theta_structural
+        n_z = 4
+        S_z_dfn = np.zeros((4, n_z))
+        eps = 1e-3
+
+        def get_y_dfn(th):
+            # Evaluate using DFN model for high-fidelity calibration
+            params = self.get_parameter_set(th, self.selected_dopant_idx, self.selected_salt_idx, self.mtms_enabled)
+            model = pybamm.lithium_ion.DFN()
+            solver = pybamm.CasadiSolver(mode="safe")
+            sim = pybamm.Simulation(model, parameter_values=params, solver=solver)
+            sl = sim.solve([0, 600], inputs={"Current [A]": 10.0})
+            v = float(np.array(sl["Terminal voltage [V]"].entries).flatten()[-1])
+            t = float(np.array(sl["Cell temperature [K]"].entries).flatten()[-1])
+            q = float(sim.parameter_values["Nominal cell capacity [A.h]"])
+            soc = 1.0 - (float(np.array(sl["Discharge capacity [A.h]"].entries).flatten()[-1]) / q)
+            c_s_avg = float(np.mean(sl["X-averaged negative particle concentration [mol.m-3]"].entries))
+            eps_val = self.solve_reduced_mechanics(t, c_s_avg, th, sim.parameter_values)
+            return np.array([v, t, soc, eps_val])
+
+        try:
+            y_base = get_y_dfn(theta)
+            for i in range(n_z):
+                d_theta = np.zeros(10)
+                _, idxs, w = self.Phi_blocks[i]
+                # Map dz=eps to d_theta: (w / ||w||^2) * eps
+                d_theta[idxs] = (w / (np.sum(w**2) + 1e-9)) * eps
+                y_p = get_y_dfn(theta + d_theta)
+                S_z_dfn[:, i] = (y_p - y_base) / eps
+
+            # 2. Compute Latent Metric Gz = Sz^T Sigma_y^-1 Sz
+            S_norm = S_z_dfn / self.y_scale[:, None]
+            self.Gz_calibrated = S_norm.T @ S_norm + 1e-3 * np.eye(n_z)
+
+            # 3. Derive Coupling Matrix W = Cholesky(Gz)
+            # This ensures material deltas follow the physical sensitivity landscape
+            self.W_coupling = np.linalg.cholesky(self.Gz_calibrated)
+            print(f"Manifold calibrated. Gz Trace: {np.trace(self.Gz_calibrated):.4e}")
+        except Exception as e:
+            logging.warning(f"DFN Manifold calibration failed: {e}. Falling back to default.")
+            self.Gz_calibrated = GZ_METRIC
+            self.W_coupling = np.sqrt(GZ_METRIC)
 
     def get_parameter_set(self, theta_s, dopant_idx, salt_idx, mtms):
         """Constructs parameter set via pure transformation layer."""
@@ -122,6 +174,7 @@ class DSMOptimizer:
 
         def apply_channels(material_obj, alpha=1.0):
             if not material_obj: return
+            # Pass calibrated coupling if available
             channels = material_obj.projected_delta
             if not isinstance(channels, dict): return
 
@@ -129,20 +182,11 @@ class DSMOptimizer:
             kt = channels.get("kinetic", {})
             tr = channels.get("transport", {})
 
-            # --- Thermodynamic Channel ---
             if "voltage_boost" in td:
                 transform.add_additive("Positive electrode OCP [V]", td["voltage_boost"] * alpha)
-            if "initial_loss_mult" in td:
-                transform.add_multiplier("Initial concentration in negative electrode [mol.m-3]", td["initial_loss_mult"])
-
-            # --- Kinetic Channel ---
             if "reaction_rate_log_delta" in kt:
                 m = math.exp(np.clip(kt["reaction_rate_log_delta"] * alpha, -5, 5))
                 transform.add_multiplier("Positive electrode exchange-current density [A.m-2]", m)
-            if "sei_growth_mult" in kt:
-                transform.add_multiplier("SEI reaction exchange current density [A.m-2]", kt["sei_growth_mult"])
-
-            # --- Transport Channel ---
             if "diffusivity_log_delta" in tr:
                 m = math.exp(np.clip(tr["diffusivity_log_delta"] * alpha, -5, 5))
                 transform.add_multiplier("Positive particle diffusivity [m2.s-1]", m)
@@ -152,6 +196,10 @@ class DSMOptimizer:
                 transform.add_multiplier("Cation transference number", tr["ion_transference_mult"])
             if "resistance_drift_mult" in tr:
                 transform.add_multiplier("SEI resistivity [Ohm.m]", tr["resistance_drift_mult"])
+            if "initial_loss_mult" in td:
+                transform.add_multiplier("Initial concentration in negative electrode [mol.m-3]", td["initial_loss_mult"])
+            if "sei_growth_mult" in kt:
+                transform.add_multiplier("SEI reaction exchange current density [A.m-2]", kt["sei_growth_mult"])
 
         if dopants: apply_channels(dopants[dopant_idx])
         if salts: apply_channels(salts[salt_idx])
@@ -160,42 +208,23 @@ class DSMOptimizer:
         return transform.evaluate()
 
     def setup_sim(self, theta_s, dopant_idx, salt_idx, mtms, model_type="SPM"):
-        """Strict simulation rebuild rule as per technical directive."""
         params = self.get_parameter_set(theta_s, dopant_idx, salt_idx, mtms)
-        model = pybamm.lithium_ion.SPM()
+        model = pybamm.lithium_ion.SPM() if model_type == "SPM" else pybamm.lithium_ion.DFN()
         solver = pybamm.CasadiSolver(mode="safe", rtol=1e-5, atol=1e-7)
-        sim = pybamm.Simulation(model, parameter_values=params, solver=solver)
-        return sim
-
-    def _get_y_pure(self, th, d_idx, s_idx, mtms, horizon=600):
-        """Deterministic evaluation with stable caching and robust exception handling."""
-        state_hash = hash((stable_hash(th), d_idx, s_idx, mtms, horizon))
-        if state_hash in self.solve_cache: return self.solve_cache[state_hash]
-
-        sim = self.setup_sim(th, d_idx, s_idx, mtms)
-        try:
-            sl = sim.solve([0, horizon], inputs={"Current [A]": 10.0})
-            v = float(np.array(sl["Terminal voltage [V]"].entries).flatten()[-1])
-            t = float(np.array(sl["Cell temperature [K]"].entries).flatten()[-1])
-            q = float(sim.parameter_values["Nominal cell capacity [A.h]"])
-            soc = 1.0 - (float(np.array(sl["Discharge capacity [A.h]"].entries).flatten()[-1]) / q)
-            c_s_avg = float(np.mean(sl["X-averaged negative particle concentration [mol.m-3]"].entries))
-            eps_val = self.solve_reduced_mechanics(t, c_s_avg, th, sim.parameter_values)
-
-            res = np.array([v, t, soc, eps_val])
-            self.solve_cache[state_hash] = res
-            return res
-        except Exception as e:
-            logging.warning(f"Simulation failed: {str(e)}")
-            return np.array(self.target_y)
+        return pybamm.Simulation(model, parameter_values=params, solver=solver)
 
     def run(self):
-        print(f"Starting Stable Riemannian DSMO Optimization...")
+        print(f"Starting Calibrated Riemannian DSMO Optimization...")
+
+        # 0. Calibrate Manifold at start
+        self._calibrate_physics_manifold()
+
         theta_s = self.theta_structural
 
         for epoch in range(self.max_epochs):
             print(f"Epoch {epoch}: Material Resolution...")
-            self.material_data = self.engine.run()
+            # Pass calibrated W_coupling to material engine
+            self.material_data = self.engine.run(W_coupling=self.W_coupling)
 
             # Annealed probabilistic selection policy
             beta_anneal = min(15.0, 1.0 + epoch * 5.0)
@@ -203,23 +232,23 @@ class DSMOptimizer:
             for k in range(self.inner_iters):
                 y = self._get_y_pure(theta_s, self.selected_dopant_idx, self.selected_salt_idx, self.mtms_enabled, horizon=1800)
 
-                # 1. Stable Structured Finite-Difference Jacobian
+                # 1. Structural Jacobian (Symmetric + Block-decoupled)
                 S_reduced = self._compute_reduced_jacobian(theta_s)
                 S_theta = S_reduced @ self.Phi
 
                 # 2. Material Selection Update (Pure Evaluation)
                 self._update_material_selection_pure(theta_s, beta=beta_anneal)
 
-                # 3. Stable Riemannian Update Step
+                # 3. Riemannian Update with Physical Scaling
                 r = (y - self.target_y) / self.y_scale
                 S_norm = S_theta / self.y_scale[:, None]
 
                 JTJ = S_norm.T @ S_norm
-                G_theta = self.Phi.T @ GZ_METRIC @ self.Phi
+                G_theta = self.Phi.T @ (self.Gz_calibrated if self.Gz_calibrated is not None else GZ_METRIC) @ self.Phi
 
-                # Combined metric with damping (not over-normalized)
+                # Combined metric with damping
                 G = JTJ + self.lam * G_theta
-                G += 1e-4 * np.eye(G.shape[0]) # Damping
+                G += 1e-4 * np.eye(G.shape[0])
 
                 # Material uncertainty injection
                 u = self.material_data["Cathode_Dopant"][self.selected_dopant_idx].uncertainty
@@ -249,10 +278,9 @@ class DSMOptimizer:
         theta[3:6] = np.clip(theta[3:6], 0.2, 0.7)
         theta[7:9] = np.clip(theta[7:9], 0.4, 0.9)
 
-        # Smooth Differentiable N/P Capacity Ratio Adjustment (Target=1.05 for safety margin)
+        # Smooth Differentiable N/P Capacity Ratio Adjustment (Target=1.05)
         capacity_ratio = (theta[8] * theta[1]) / (theta[7] * theta[0] + 1e-9)
         target_ratio = 1.05
-        # Adaptive log-adjustment prevents discontinuous jumps
         theta[1] *= np.exp(0.1 * np.log(target_ratio / (capacity_ratio + 1e-9)))
 
         return np.clip(theta,
@@ -263,6 +291,27 @@ class DSMOptimizer:
         assert np.all(np.isfinite(y)), "Non-finite outputs."
         assert np.all(np.isfinite(theta)), "Non-finite parameters."
 
+    def _get_y_pure(self, th, d_idx, s_idx, mtms, horizon=600):
+        """Deterministic evaluation with stable caching and robust exception handling."""
+        state_hash = hash((stable_hash(th), d_idx, s_idx, mtms, horizon))
+        if state_hash in self.solve_cache: return self.solve_cache[state_hash]
+
+        sim = self.setup_sim(th, d_idx, s_idx, mtms)
+        try:
+            sl = sim.solve([0, horizon], inputs={"Current [A]": 10.0})
+            v = float(np.array(sl["Terminal voltage [V]"].entries).flatten()[-1])
+            t = float(np.array(sl["Cell temperature [K]"].entries).flatten()[-1])
+            q = float(sim.parameter_values["Nominal cell capacity [A.h]"])
+            soc = 1.0 - (float(np.array(sl["Discharge capacity [A.h]"].entries).flatten()[-1]) / q)
+            c_s_avg = float(np.mean(sl["X-averaged negative particle concentration [mol.m-3]"].entries))
+            eps_val = self.solve_reduced_mechanics(t, c_s_avg, th, sim.parameter_values)
+
+            res = np.array([v, t, soc, eps_val])
+            self.solve_cache[state_hash] = res
+            return res
+        except Exception as e:
+            logging.warning(f"Simulation failed: {str(e)}")
+            return np.array(self.target_y)
 
     def _compute_reduced_jacobian(self, theta_s):
         """Stable structured finite-difference Jacobian with orthonormal projection."""
@@ -273,16 +322,14 @@ class DSMOptimizer:
         base_y = self._get_y_pure(theta_s, self.selected_dopant_idx, self.selected_salt_idx, self.mtms_enabled, horizon=600)
 
         for i in range(n_z):
-            d_theta = np.zeros_like(theta_s)
+            d_theta = np.zeros(10)
             _, idxs, w = self.Phi_blocks[i]
 
-            # Orthonormal projection for directional consistency
+            # Orthonormal projection
             w = w / (np.linalg.norm(w) + 1e-9)
-            # Orthogonalize against previous blocks to prevent bias
             for j in range(i):
                 prev_w = self.Phi_blocks[j][2]
                 prev_idxs = self.Phi_blocks[j][1]
-                # Map back to full space for dot product
                 w_full = np.zeros(10); w_full[idxs] = w
                 prev_full = np.zeros(10); prev_full[prev_idxs] = prev_w / (np.linalg.norm(prev_w) + 1e-9)
                 w_full = w_full - np.dot(w_full, prev_full) * prev_full
@@ -310,7 +357,6 @@ class DSMOptimizer:
             scs = np.array([score(self._get_y_pure(theta_s, i, self.selected_salt_idx, self.mtms_enabled), dopants[i].uncertainty)
                    for i in range(len(dopants))])
             p = softmax(scs, beta=beta)
-            # Deterministic convergence late in annealing stage
             if beta > 10.0:
                 self.selected_dopant_idx = int(np.argmax(p))
             else:

@@ -1,7 +1,7 @@
 import re
 import math
 import numpy as np
-from typing import Dict, Set, List
+from typing import Dict, Set, List, Optional
 
 def parse_formula(formula: str) -> Set[str]:
     """
@@ -67,7 +67,8 @@ def derive_coupled_deltas(
     base_props: Dict[str, float],
     proxy_props: Dict[str, float],
     base_v: float,
-    realization: float
+    realization: float,
+    W_coupling: Optional[np.ndarray] = None
 ) -> Dict[str, Dict[str, float]]:
     """
     Metric-aligned channel model with magnitude preservation.
@@ -92,9 +93,8 @@ def derive_coupled_deltas(
     # bounded magnitude preservation via tanh
     z = np.tanh(z_raw / z_scale)
 
-    # metric-aligned coupling matrix (W = sqrt(Gz))
-    # Aligns chemistry perturbations with the Riemannian manifold curvature
-    W = np.sqrt(GZ_METRIC)
+    # Use calibrated coupling matrix if provided, else fall back to sqrt(GZ)
+    W = W_coupling if W_coupling is not None else np.sqrt(GZ_METRIC)
 
     dy = W @ z
 

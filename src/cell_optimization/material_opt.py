@@ -95,14 +95,14 @@ class PhysicsModels:
             return 3.2 * 0.8
 
     @staticmethod
-    def cathode_perturbation(proxy_props: Dict[str, float], base_props: Dict[str, float], base_params: Any, base_formula: str, proxy_formula: str) -> tuple[Dict[str, Any], float]:
-        """Calculates cathode deltas with semantically correct anchor naming."""
+    def cathode_perturbation(proxy_props: Dict[str, float], base_props: Dict[str, float], base_params: Any, base_formula: str, proxy_formula: str, W_coupling: Optional[np.ndarray] = None) -> tuple[Dict[str, Any], float]:
+        """Calculates cathode deltas with semantically correct anchor naming and optional coupling calibration."""
         realization = compute_chemical_realization(base_formula, proxy_formula, base_props, proxy_props)
 
         base_ocp = base_params["Positive electrode OCP [V]"]
         base_v = PhysicsModels.safe_ocp(base_ocp)
 
-        deltas = derive_coupled_deltas(base_props, proxy_props, base_v, realization)
+        deltas = derive_coupled_deltas(base_props, proxy_props, base_v, realization, W_coupling=W_coupling)
         return deltas, realization
 
     @staticmethod
@@ -243,7 +243,7 @@ class MaterialMappingEngine:
 
         return props, conf, source
 
-    def run(self):
+    def run(self, W_coupling: Optional[np.ndarray] = None):
         print("Executing Decoupled Materials Mapping & Physics Engine...")
         system = {"Cathode_Dopant": [], "Salt": [], "Functionalization": []}
         physics = PhysicsModels()
@@ -270,7 +270,7 @@ class MaterialMappingEngine:
 
             if not proxy_props: continue
 
-            deltas, realization = physics.cathode_perturbation(proxy_props, base_cathode, self.base_params, BASE_CATHODE_FORMULA, proxy_formula)
+            deltas, realization = physics.cathode_perturbation(proxy_props, base_cathode, self.base_params, BASE_CATHODE_FORMULA, proxy_formula, W_coupling=W_coupling)
 
             # Uncertainty-aware Weighted Correction (Inverse-variance weighting)
             # corrected = (w*proxy + w0*base) / (w + w0)
