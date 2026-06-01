@@ -27,7 +27,7 @@ def softmax(x, beta=1.0):
 
 def stable_hash(theta):
     """Mathematically robust hash for float arrays."""
-    return hash(theta.round(8).tobytes())
+    return hash(np.round(theta, 6).tobytes())
 
 class ParamTransform:
     """Pure parameter wrapper to prevent dictionary mutation leakage."""
@@ -105,12 +105,6 @@ class DSMOptimizer:
         for block_idx, indices, weights in self.Phi_blocks:
             self.Phi[block_idx, indices] = weights
 
-        # Precompute block pseudoinverses for consistent least-squares projection
-        self.Phi_pinv_blocks = []
-        for _, idxs, w in self.Phi_blocks:
-            self.Phi_pinv_blocks.append(np.linalg.pinv(w.reshape(-1, 1)))
-
-        self.sim_cache = {}
         self.solve_cache = {}
 
     def get_parameter_set(self, theta_s, dopant_idx, salt_idx, mtms):
@@ -136,7 +130,6 @@ class DSMOptimizer:
             if "voltage_boost" in td:
                 transform.add_additive("Positive electrode OCP [V]", td["voltage_boost"] * alpha)
             if "reaction_rate_log_delta" in kt:
-                # Bounded exponential transformation
                 m = math.exp(np.clip(kt["reaction_rate_log_delta"] * alpha, -5, 5))
                 transform.add_multiplier("Positive electrode exchange-current density [A.m-2]", m)
             if "diffusivity_log_delta" in tr:
@@ -150,15 +143,15 @@ class DSMOptimizer:
         return transform.evaluate()
 
     def setup_sim(self, theta_s, dopant_idx, salt_idx, mtms, model_type="SPM"):
-        """Ensures simulation object purity by strictly avoiding mutation."""
+        """Strict simulation rebuild rule as per technical directive."""
         params = self.get_parameter_set(theta_s, dopant_idx, salt_idx, mtms)
-        model = pybamm.lithium_ion.SPM() if model_type == "SPM" else pybamm.lithium_ion.DFN()
-        solver = pybamm.CasadiSolver(mode="safe")
-        # Fresh simulation every time to avoid CasADi expression cache issues
-        return pybamm.Simulation(model, parameter_values=params, solver=solver)
+        model = pybamm.lithium_ion.SPM()
+        solver = pybamm.CasadiSolver(mode="safe", rtol=1e-5, atol=1e-7)
+        sim = pybamm.Simulation(model, parameter_values=params, solver=solver)
+        return sim
 
     def run(self):
-        print(f"Starting Riemannian DSMO Optimization with Least-Squares Projection...")
+        print(f"Starting Stable Riemannian DSMO Optimization...")
         theta_s = self.theta_structural
 
         for epoch in range(self.max_epochs):
@@ -171,32 +164,29 @@ class DSMOptimizer:
             for k in range(self.inner_iters):
                 y = self._get_y_pure(theta_s, self.selected_dopant_idx, self.selected_salt_idx, self.mtms_enabled, horizon=1800)
 
-                # 1. Structural Jacobian (Reduced + Consistent LS Projection)
+                # 1. Stable Structured Finite-Difference Jacobian
                 S_reduced = self._compute_reduced_jacobian(theta_s)
                 S_theta = S_reduced @ self.Phi
 
                 # 2. Material Selection Update (Pure Evaluation)
                 self._update_material_selection_pure(theta_s, beta=beta_anneal)
 
-                # 3. Riemannian Update with Physical Scaling
+                # 3. Stable Riemannian Update Step
                 r = (y - self.target_y) / self.y_scale
                 S_norm = S_theta / self.y_scale[:, None]
 
-                # Normalize Hessian components to prevent scale-dominance
-                # G = (J^T Sigma^-1 J)/tr(.) + lambda * G_theta / tr(.)
                 JTJ = S_norm.T @ S_norm
                 G_theta = self.Phi.T @ GZ_METRIC @ self.Phi
 
-                # Weighted Metric Aggregation
-                G = JTJ / (np.trace(JTJ) + 1e-9) + self.lam * G_theta / (np.trace(G_theta) + 1e-9)
-                G += 1e-6 * np.eye(10) # Tikhonov diagonal damping
+                # Combined metric with damping (not over-normalized)
+                G = JTJ + self.lam * G_theta
+                G += 1e-4 * np.eye(G.shape[0]) # Damping
 
-                # Material uncertainty propagation (Output-space aligned)
+                # Material uncertainty injection
                 u = self.material_data["Cathode_Dopant"][self.selected_dopant_idx].uncertainty
-                Sigma_y = np.diag(self.y_scale**2) * u
-                G += 0.1 * S_norm.T @ Sigma_y @ S_norm / (np.trace(S_norm.T @ Sigma_y @ S_norm) + 1e-9)
+                G += 0.05 * u * np.eye(G.shape[0])
 
-                update = np.linalg.solve(G, S_norm.T @ r / (np.trace(JTJ) + 1e-9))
+                update = np.linalg.solve(G, S_norm.T @ r)
                 theta_s = theta_s - self.lr * update
 
                 # 4. Physical Manifold Projection
@@ -221,7 +211,7 @@ class DSMOptimizer:
         assert np.all(np.isfinite(theta)), "Non-finite parameters."
 
     def _get_y_pure(self, th, d_idx, s_idx, mtms, horizon=600):
-        """Pure evaluation with stable caching."""
+        """Deterministic evaluation with stable caching."""
         state_hash = hash((stable_hash(th), d_idx, s_idx, mtms, horizon))
         if state_hash in self.solve_cache: return self.solve_cache[state_hash]
 
@@ -242,23 +232,23 @@ class DSMOptimizer:
             return self.target_y
 
     def _compute_reduced_jacobian(self, theta_s):
-        """Computes dy/dz via symmetric Finite Difference in structured latent space."""
+        """Stable structured finite-difference Jacobian."""
         n_z = 4
         S_z = np.zeros((4, n_z))
-        eps = 1e-3
+        eps = 5e-4
+
+        base_y = self._get_y_pure(theta_s, self.selected_dopant_idx, self.selected_salt_idx, self.mtms_enabled, horizon=600)
 
         for i in range(n_z):
-            # Block-wise consistent least-squares projection
-            d_theta = np.zeros(10)
-            block_id, idxs, w = self.Phi_blocks[i]
+            d_theta = np.zeros_like(theta_s)
+            _, idxs, w = self.Phi_blocks[i]
+            w = w / (np.linalg.norm(w) + 1e-9)
 
-            # Map dz=eps to d_theta: Least Squares Projection
-            # d_theta_i = pinv(w) * eps
-            d_theta[idxs] = (self.Phi_pinv_blocks[i] * eps).flatten()
+            # Consistent directional lift
+            d_theta[idxs] = eps * w
 
-            y_p = self._get_y_pure(theta_s + d_theta, self.selected_dopant_idx, self.selected_salt_idx, self.mtms_enabled, horizon=600)
-            y_m = self._get_y_pure(theta_s - d_theta, self.selected_dopant_idx, self.selected_salt_idx, self.mtms_enabled, horizon=600)
-            S_z[:, i] = (y_p - y_m) / (2 * eps)
+            y_plus = self._get_y_pure(theta_s + d_theta, self.selected_dopant_idx, self.selected_salt_idx, self.mtms_enabled, horizon=600)
+            S_z[:, i] = (y_plus - base_y) / eps
 
         return S_z
 
@@ -286,7 +276,7 @@ class DSMOptimizer:
         c_max = float(param_vals["Maximum concentration in negative electrode [mol.m-3]"])
         beta = 0.05 / (c_max + 1e-6)
         eps = eps_alpha * (T - 300.15) + beta * c_s_avg
-        eps += 0.02 * (1.0 - theta_s[3]) * (c_s_avg / (c_max + 1e-6))
+        eps += 0.02 * (1.0 + theta_s[3]) * (c_s_avg / (c_max + 1e-6))
         return eps
 
 if __name__ == "__main__":
