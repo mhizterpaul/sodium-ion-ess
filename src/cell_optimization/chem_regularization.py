@@ -5,25 +5,36 @@ from typing import Dict, Set, List, Optional, Any
 
 KT = 0.0259 # eV at 300K
 
-def parse_formula(formula: str) -> Set[str]:
+def parse_stoich(formula: str) -> Dict[str, float]:
     """
-    Extracts elemental symbols from a chemical formula.
-    Example: 'Na4Fe3P4O15' -> {'Na', 'Fe', 'P', 'O'}
+    Parses a chemical formula into element counts.
+    Example: 'Na4Fe3P4O15' -> {'Na': 4.0, 'Fe': 3.0, 'P': 4.0, 'O': 15.0}
     """
-    return set(re.findall(r'[A-Z][a-z]?', formula))
+    tokens = re.findall(r'([A-Z][a-z]?)(\d*\.?\d*)', formula)
+    result = {}
+    for element, amount in tokens:
+        result[element] = float(amount) if amount else 1.0
+    return result
 
-def thermo_norm(x, ref=0.0):
-    return (x - ref) / KT
+def thermo_norm(x, ref):
+    """Material-energy scale normalization."""
+    return (x - ref) / max(abs(ref), 0.1)
 
-def stoich_norm(formula_dict: dict) -> dict:
+def stoich_norm(formula_dict: Dict[str, float]) -> Dict[str, float]:
+    """Normalizes stoichiometric counts to sum to 1."""
     total = sum(formula_dict.values())
-    if total == 0: return {k: 0 for k in formula_dict}
+    if total == 0: return {k: 0.0 for k in formula_dict}
     return {k: v / total for k, v in formula_dict.items()}
+
+def stoich_distance(base: Dict[str, float], proxy: Dict[str, float]) -> float:
+    """Computes the difference between normalized stoichiometries."""
+    keys = set(base) | set(proxy)
+    return sum(abs(base.get(k, 0.0) - proxy.get(k, 0.0)) for k in keys)
 
 def geom_norm(props, base_props):
     return {
         "volume_ratio": props["volume_per_atom"] / base_props["volume_per_atom"],
-        "strain": (props["volume_per_atom"] - base_props["volume_per_atom"]) / base_props["volume_per_atom"]
+        "strain": (props["volume_per_atom"] - base_props["volume_per_atom"]) / (base_props["volume_per_atom"] + 1e-9)
     }
 
 def compute_chemical_realization(
@@ -33,45 +44,34 @@ def compute_chemical_realization(
     proxy_props: Dict[str, float]
 ) -> float:
     """
-    Stable bounded realization score in [0,1]
-    using additive logit fusion instead of multiplicative collapse.
+    How safely can this proxy perturb the base material?
+    Uses stoichiometry, chemical overlap, and physics residuals.
     """
-
     def safe(x, ref=0.0):
-        try:
-            return float(x)
-        except:
-            return ref
+        try: return float(x)
+        except: return ref
 
-    # --- chemical overlap ---
-    e_base = parse_formula(base_formula)
-    e_proxy = parse_formula(proxy_formula)
+    # --- Stoichiometry and chemical overlap ---
+    base_s = stoich_norm(parse_stoich(base_formula))
+    proxy_s = stoich_norm(parse_stoich(proxy_formula))
 
+    stoich_penalty = stoich_distance(base_s, proxy_s)
+
+    e_base = set(base_s.keys())
+    e_proxy = set(proxy_s.keys())
     r_chem = len(e_base & e_proxy) / max(len(e_base | e_proxy), 1)
 
-    # --- normalized physics residuals (log-stabilized via tanh) ---
-    dv = np.tanh(
-        (safe(proxy_props.get("volume_per_atom")) -
-         safe(base_props.get("volume_per_atom"))) /
-        (safe(base_props.get("volume_per_atom")) + 1e-9)
+    # --- Physical residuals ---
+    dE = thermo_norm(safe(proxy_props.get("formation_energy")), safe(base_props.get("formation_energy")))
+    dV = (safe(proxy_props.get("volume_per_atom")) - safe(base_props.get("volume_per_atom"))) / (safe(base_props.get("volume_per_atom")) + 1e-9)
+
+    # Realization equation: higher is better
+    z = (
+        3.0 * r_chem
+        - 1.5 * abs(dE)
+        - 1.0 * abs(dV)
+        - 2.0 * stoich_penalty
     )
-
-    de = np.tanh(
-        (safe(proxy_props.get("band_gap")) -
-         safe(base_props.get("band_gap"))) /
-        (safe(base_props.get("band_gap")) + 1e-6)
-    )
-
-    df = np.tanh(
-        safe(proxy_props.get("formation_energy")) -
-        safe(base_props.get("formation_energy"))
-    )
-
-    # energy norm instead of raw quadratic collapse
-    phys_energy = (0.5 * dv**2 + 0.3 * de**2 + 0.2 * df**2)
-
-    # logit-space fusion (stable weighting)
-    z = 3.0 * r_chem - 2.5 * phys_energy
 
     z = np.clip(z, -10, 10)
     return float(1.0 / (1.0 + np.exp(-z)))
@@ -82,16 +82,24 @@ def derive_coupled_deltas(
 ) -> Dict[str, Dict[str, float]]:
     """
     Physics-only transformation layer.
-    Replaces latent vector model with physical residual state.
     """
     dE = thermo_norm(proxy_props["formation_energy"], base_props["formation_energy"])
     dG = (proxy_props["band_gap"] - base_props["band_gap"]) / 1.0
     dV = geom_norm(proxy_props, base_props)["strain"]
-    dS = (proxy_props["stability"] - base_props["stability"]) / 0.2
+    # Positive dS means improvement (lower energy above hull)
+    dS = (base_props["stability"] - proxy_props["stability"]) / 0.2
 
     # Physics coupling rules
-    voltage_boost = -0.05 * dE
-    diffusivity_log_delta = 0.5 * dV - 0.2 * dG
+    voltage_boost = -0.01 * dE # Small correction
+
+    # Arrhenius form: D = D0 * exp(-Ea / KT)
+    # activation_delta = 0.2 * dV + 0.1 * dG
+    # diffusivity_log_delta = -activation_delta / KT
+    # But wait, dV and dG are already dimensionless-ish.
+    # Let's keep the user's explicit requested formula for activation_delta
+    activation_delta = 0.2 * dV + 0.1 * dG
+    diffusivity_log_delta = -activation_delta / (KT + 1e-9)
+
     reaction_rate_log_delta = 0.1 * dE - 0.3 * dG
     stability_shift = dS
 
