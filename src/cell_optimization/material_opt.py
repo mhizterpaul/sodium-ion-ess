@@ -36,8 +36,6 @@ CACHE_FILE = "material_cache.json"
 CACHE_VERSION = "v3"
 KT = 0.0259 # eV at 300K
 
-
-
 REQUIRED_CHANNELS = {"thermodynamic", "kinetic", "transport", "structural"}
 
 @dataclass
@@ -66,15 +64,23 @@ class MaterialCandidate:
         """Maps derived deltas to PyBaMM parameter names."""
         mapping = {}
         if self.category == "Cathode_Dopant":
-            mapping["Positive electrode OCP [V]"] = ("additive", self.projected_delta.get("voltage_boost", 0.0))
-            mapping["Positive particle diffusivity [m2.s-1]"] = ("multiplier", self.projected_delta.get("diffusivity_mult", 1.0))
+            td = self.projected_delta.get("thermodynamic", {})
+            kt = self.projected_delta.get("kinetic", {})
+            tr = self.projected_delta.get("transport", {})
+            mapping["Positive electrode OCP [V]"] = ("additive", td.get("voltage_boost", 0.0))
+            mapping["Positive particle diffusivity [m2.s-1]"] = ("multiplier", math.exp(tr.get("diffusivity_log_delta", 0.0)))
+            mapping["Positive electrode exchange-current density [A.m-2]"] = ("multiplier", math.exp(kt.get("reaction_rate_log_delta", 0.0)))
         elif self.category == "Salt":
-            mapping["Electrolyte conductivity [S.m-1]"] = ("multiplier", self.projected_delta.get("conductivity_mult", 1.0))
-            mapping["Cation transference number"] = ("multiplier", self.projected_delta.get("ion_transference_mult", 1.0))
+            tr = self.projected_delta.get("transport", {})
+            mapping["Electrolyte conductivity [S.m-1]"] = ("multiplier", tr.get("conductivity_mult", 1.0))
+            mapping["Cation transference number"] = ("multiplier", tr.get("ion_transference_mult", 1.0))
         elif self.category == "Functionalization":
-            mapping["SEI reaction exchange current density [A.m-2]"] = ("multiplier", self.projected_delta.get("sei_growth_mult", 1.0))
-            mapping["Initial concentration in negative electrode [mol.m-3]"] = ("multiplier", self.projected_delta.get("initial_loss_mult", 1.0))
-            mapping["SEI resistivity [Ohm.m]"] = ("multiplier", self.projected_delta.get("resistance_drift_mult", 1.0))
+            td = self.projected_delta.get("thermodynamic", {})
+            kt = self.projected_delta.get("kinetic", {})
+            tr = self.projected_delta.get("transport", {})
+            mapping["SEI reaction exchange current density [A.m-2]"] = ("multiplier", kt.get("sei_growth_mult", 1.0))
+            mapping["Initial concentration in negative electrode [mol.m-3]"] = ("multiplier", td.get("initial_loss_mult", 1.0))
+            mapping["SEI resistivity [Ohm.m]"] = ("multiplier", tr.get("resistance_drift_mult", 1.0))
         return mapping
 
 class PhysicsModels:
@@ -95,14 +101,10 @@ class PhysicsModels:
             return 3.2 * 0.8
 
     @staticmethod
-    def cathode_perturbation(proxy_props: Dict[str, float], base_props: Dict[str, float], base_params: Any, base_formula: str, proxy_formula: str, W_coupling: Optional[np.ndarray] = None) -> tuple[Dict[str, Any], float]:
-        """Calculates cathode deltas with semantically correct anchor naming and optional coupling calibration."""
+    def cathode_perturbation(proxy_props: Dict[str, float], base_props: Dict[str, float], base_params: Any, base_formula: str, proxy_formula: str) -> tuple[Dict[str, Any], float]:
+        """Calculates cathode deltas with semantically correct anchor naming."""
         realization = compute_chemical_realization(base_formula, proxy_formula, base_props, proxy_props)
-
-        base_ocp = base_params["Positive electrode OCP [V]"]
-        base_v = PhysicsModels.safe_ocp(base_ocp)
-
-        deltas = derive_coupled_deltas(base_props, proxy_props, base_v, realization, W_coupling=W_coupling)
+        deltas = derive_coupled_deltas(base_props, proxy_props, base_params)
         return deltas, realization
 
     @staticmethod
@@ -167,7 +169,6 @@ class MaterialMappingEngine:
         return {}
 
     def _save_cache(self):
-        # Cache disabled as per PR requirements
         pass
 
     def _valid_props(self, p: Dict[str, Any]) -> bool:
@@ -223,7 +224,6 @@ class MaterialMappingEngine:
             except Exception as e:
                 logging.warning(f"MP query failed for {formula}: {e}")
 
-        # Final property resolution and uncertainty modeling
         props, conf, source = None, 0.0, "NONE"
         if props_oqmd and props_mp:
             props = {k: 0.5*(props_oqmd[k] + props_mp[k]) for k in props_oqmd}
@@ -239,12 +239,11 @@ class MaterialMappingEngine:
 
         if props and self._valid_props(props):
             self.cache[cache_key] = {"props": props, "conf": conf, "source": source}
-            self._save_cache()
 
         return props, conf, source
 
-    def run(self, W_coupling: Optional[np.ndarray] = None):
-        print("Executing Decoupled Materials Mapping & Physics Engine...")
+    def run(self):
+        print("Executing Physics-Driven Materials Mapping...")
         system = {"Cathode_Dopant": [], "Salt": [], "Functionalization": []}
         physics = PhysicsModels()
 
@@ -256,7 +255,6 @@ class MaterialMappingEngine:
         if not base_salt:
             base_salt = {"stability": 0.01, "formation_energy": -1.8, "band_gap": 5.0, "volume_per_atom": 25.0, "natoms": 7}
 
-        # Exact doped variants for direct composition optimization
         dopant_proxies = {
             "Mn": "Na4Fe2.7Mn0.3P4O15",
             "Cr": "Na4Fe2.7Cr0.3P4O15",
@@ -270,22 +268,18 @@ class MaterialMappingEngine:
 
             if not proxy_props: continue
 
-            deltas, realization = physics.cathode_perturbation(proxy_props, base_cathode, self.base_params, BASE_CATHODE_FORMULA, proxy_formula, W_coupling=W_coupling)
+            deltas, realization = physics.cathode_perturbation(proxy_props, base_cathode, self.base_params, BASE_CATHODE_FORMULA, proxy_formula)
 
-            # Uncertainty-aware Weighted Correction (Inverse-variance weighting)
-            # corrected = (w*proxy + w0*base) / (w + w0)
             u_proxy = proxy_props.get("uncertainty", 0.1)
             u_base = base_cathode.get("uncertainty", 0.05)
-
-            # True inverse variance weighting (w = 1 / uncertainty**2)
             w_p = 1.0 / (u_proxy**2 + 1e-6)
             w_b = 1.0 / (u_base**2 + 1e-6)
 
-            common_keys = set(proxy_props.keys()) & set(base_cathode.keys())
+            common_keys = {"formation_energy", "band_gap", "stability", "volume_per_atom"}
             corrected_props = {
                 k: (w_p * proxy_props[k] + w_b * base_cathode[k]) / (w_p + w_b)
                 for k in common_keys
-                if np.isfinite(proxy_props[k]) and np.isfinite(base_cathode[k])
+                if k in proxy_props and k in base_cathode and np.isfinite(proxy_props[k]) and np.isfinite(base_cathode[k])
             }
 
             system["Cathode_Dopant"].append(MaterialCandidate(

@@ -1,7 +1,9 @@
 import re
 import math
 import numpy as np
-from typing import Dict, Set, List, Optional
+from typing import Dict, Set, List, Optional, Any
+
+KT = 0.0259 # eV at 300K
 
 def parse_formula(formula: str) -> Set[str]:
     """
@@ -9,6 +11,20 @@ def parse_formula(formula: str) -> Set[str]:
     Example: 'Na4Fe3P4O15' -> {'Na', 'Fe', 'P', 'O'}
     """
     return set(re.findall(r'[A-Z][a-z]?', formula))
+
+def thermo_norm(x, ref=0.0):
+    return (x - ref) / KT
+
+def stoich_norm(formula_dict: dict) -> dict:
+    total = sum(formula_dict.values())
+    if total == 0: return {k: 0 for k in formula_dict}
+    return {k: v / total for k, v in formula_dict.items()}
+
+def geom_norm(props, base_props):
+    return {
+        "volume_ratio": props["volume_per_atom"] / base_props["volume_per_atom"],
+        "strain": (props["volume_per_atom"] - base_props["volume_per_atom"]) / base_props["volume_per_atom"]
+    }
 
 def compute_chemical_realization(
     base_formula: str,
@@ -60,61 +76,41 @@ def compute_chemical_realization(
     z = np.clip(z, -10, 10)
     return float(1.0 / (1.0 + np.exp(-z)))
 
-# Latent Physics Metric Gz (Curvature preference in physics directions)
-GZ_METRIC = np.diag([10.0, 5.0, 2.0, 1.0])
-
 def derive_coupled_deltas(
     base_props: Dict[str, float],
     proxy_props: Dict[str, float],
-    base_v: float,
-    realization: float,
-    W_coupling: Optional[np.ndarray] = None
+    base_params: Any
 ) -> Dict[str, Dict[str, float]]:
     """
-    Metric-aligned channel model with magnitude preservation.
+    Physics-only transformation layer.
+    Replaces latent vector model with physical residual state.
     """
+    dE = thermo_norm(proxy_props["formation_energy"], base_props["formation_energy"])
+    dG = (proxy_props["band_gap"] - base_props["band_gap"]) / 1.0
+    dV = geom_norm(proxy_props, base_props)["strain"]
+    dS = (proxy_props["stability"] - base_props["stability"]) / 0.2
 
-    # --- raw latent vector ---
-    z_raw = np.array([
-        proxy_props["formation_energy"] - base_props["formation_energy"],
-        proxy_props["volume_per_atom"] - base_props["volume_per_atom"],
-        proxy_props["band_gap"] - base_props["band_gap"],
-        proxy_props["stability"] - base_props["stability"]
-    ], dtype=float)
+    # Physics coupling rules
+    voltage_boost = -0.05 * dE
+    diffusivity_log_delta = 0.5 * dV - 0.2 * dG
+    reaction_rate_log_delta = 0.1 * dE - 0.3 * dG
+    stability_shift = dS
 
-    # characteristic property scales (preserves relative magnitude)
-    z_scale = np.array([
-        1.0,   # eV (formation energy)
-        10.0,  # Å³/atom (volume)
-        3.0,   # eV (bandgap)
-        0.5    # eV/atom above hull (stability)
-    ])
-
-    # bounded magnitude preservation via tanh
-    z = np.tanh(z_raw / z_scale)
-
-    # Use calibrated coupling matrix if provided, else fall back to sqrt(GZ)
-    W = W_coupling if W_coupling is not None else np.sqrt(GZ_METRIC)
-
-    dy = W @ z
-
-    scale = float(realization)
-    def clip(x): return float(np.tanh(x))
+    def clip_log(x):
+        return float(np.clip(x, -5, 5))
 
     return {
         "thermodynamic": {
-            "voltage_boost": clip(-dy[0]) * scale * 0.05, # scaled for OCP shift
-            "stability_shift": clip(dy[3]) * scale
+            "voltage_boost": float(voltage_boost),
+            "stability_shift": float(stability_shift)
         },
         "kinetic": {
-            # reaction kinetics coupled to energetic and electronic shifts
-            "reaction_rate_log_delta": clip(0.1 * dy[0] - 0.2 * dy[2]) * scale
+            "reaction_rate_log_delta": clip_log(reaction_rate_log_delta)
         },
         "transport": {
-            # diffusivity coupled to structural and electronic shifts
-            "diffusivity_log_delta": clip(1.0 * dy[1] - 0.3 * dy[2]) * scale
+            "diffusivity_log_delta": clip_log(diffusivity_log_delta)
         },
         "structural": {
-            "volume_expansion_coeff": clip(dy[1]) * scale
+            "volume_expansion_coeff": float(dV)
         }
     }
