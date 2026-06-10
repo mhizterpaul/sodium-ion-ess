@@ -6,7 +6,13 @@ import numpy as np
 import logging
 from typing import List, Dict, Optional, Any
 from dataclasses import dataclass, field
-from src.cell_optimization.chem_regularization import compute_chemical_realization, derive_coupled_deltas
+from src.cell_optimization.chem_regularization import (
+    compute_chemical_realization,
+    derive_coupled_deltas,
+    salt_physics,
+    anode_physics,
+    KT
+)
 
 try:
     import requests
@@ -34,7 +40,6 @@ DOPANTS = ["Mn", "Cr", "Ni"]
 OQMD_URL = "https://oqmd.org/oqmdapi/formationenergy"
 CACHE_FILE = "material_cache.json"
 CACHE_VERSION = "v3"
-KT = 0.0259 # eV at 300K
 
 REQUIRED_CHANNELS = {"thermodynamic", "kinetic", "transport", "structural"}
 
@@ -87,12 +92,6 @@ class PhysicsModels:
     """Transformation layer for material properties to performance deltas."""
 
     @staticmethod
-    def stability_decomposition(props: Dict[str, float]) -> tuple[float, float]:
-        s_thermo = props["stability"]
-        s_kinetic = props["band_gap"] / (props["volume_per_atom"] + 1e-6)
-        return s_thermo, s_kinetic
-
-    @staticmethod
     def safe_ocp(ocp_func: Any, x: float = 0.5) -> float:
         try:
             v = ocp_func(x)
@@ -110,40 +109,12 @@ class PhysicsModels:
     @staticmethod
     def salt_dissociation(props: Dict[str, float], base_props: Dict[str, float]) -> Dict[str, Any]:
         """Refined salt model returning structured channels."""
-        s_thermo, _ = PhysicsModels.stability_decomposition(props)
-        s_base_thermo, _ = PhysicsModels.stability_decomposition(base_props)
-
-        ef_diff = props["formation_energy"] - base_props["formation_energy"]
-        sigma_mult = math.exp(np.clip(-ef_diff / (2 * KT), -10, 10))
-        sigma_mult = min(max(sigma_mult, 0.1), 10.0)
-
-        delta_s = s_thermo - s_base_thermo
-        dissociation = 1.0 / (1.0 + math.exp(np.clip(25.0 * delta_s, -20, 20)))
-
-        return {
-            "thermodynamic": {"stability_shift": delta_s},
-            "kinetic": {},
-            "transport": {
-                "conductivity_mult": sigma_mult * dissociation,
-                "ion_transference_mult": 1.0 + (0.15 * dissociation)
-            },
-            "structural": {}
-        }
+        return salt_physics(props, base_props)
 
     @staticmethod
     def anode_interface(props: Dict[str, float]) -> Dict[str, Any]:
         """Anode functionalization model returning structured channels."""
-        s_thermo, _ = PhysicsModels.stability_decomposition(props)
-        sei_growth = 0.5 + 0.5 * math.exp(np.clip(-s_thermo * 8.0, -20, 20))
-        r_sei = 1.0 + 0.4 * (1.0 - math.exp(np.clip(-s_thermo, -20, 20)))
-        loss = 0.7 + 0.3 * (1.0 - math.exp(np.clip(-s_thermo, -20, 20)))
-
-        return {
-            "thermodynamic": {"initial_loss_mult": loss},
-            "kinetic": {"sei_growth_mult": sei_growth},
-            "transport": {"resistance_drift_mult": r_sei},
-            "structural": {}
-        }
+        return anode_physics(props)
 
 class MaterialMappingEngine:
     def __init__(self):

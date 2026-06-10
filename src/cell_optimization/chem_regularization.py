@@ -81,7 +81,7 @@ def derive_coupled_deltas(
     proxy_props: Dict[str, float]
 ) -> Dict[str, Dict[str, float]]:
     """
-    Physics-only transformation layer.
+    Physics-only transformation layer for cathode dopants.
     """
     dE = thermo_norm(proxy_props["formation_energy"], base_props["formation_energy"])
     dG = (proxy_props["band_gap"] - base_props["band_gap"]) / 1.0
@@ -93,10 +93,6 @@ def derive_coupled_deltas(
     voltage_boost = -0.01 * dE # Small correction
 
     # Arrhenius form: D = D0 * exp(-Ea / KT)
-    # activation_delta = 0.2 * dV + 0.1 * dG
-    # diffusivity_log_delta = -activation_delta / KT
-    # But wait, dV and dG are already dimensionless-ish.
-    # Let's keep the user's explicit requested formula for activation_delta
     activation_delta = 0.2 * dV + 0.1 * dG
     diffusivity_log_delta = -activation_delta / (KT + 1e-9)
 
@@ -120,4 +116,37 @@ def derive_coupled_deltas(
         "structural": {
             "volume_expansion_coeff": float(dV)
         }
+    }
+
+def salt_physics(props: Dict[str, float], base_props: Dict[str, float]) -> Dict[str, Any]:
+    """Salt dissociation and transport physics."""
+    ef_diff = props["formation_energy"] - base_props["formation_energy"]
+    sigma_mult = math.exp(np.clip(-ef_diff / (2 * KT), -10, 10))
+    sigma_mult = min(max(sigma_mult, 0.1), 10.0)
+
+    delta_s = base_props["stability"] - props["stability"]
+    dissociation = 1.0 / (1.0 + math.exp(np.clip(25.0 * delta_s, -20, 20)))
+
+    return {
+        "thermodynamic": {"stability_shift": delta_s},
+        "kinetic": {},
+        "transport": {
+            "conductivity_mult": sigma_mult * dissociation,
+            "ion_transference_mult": 1.0 + (0.15 * dissociation)
+        },
+        "structural": {}
+    }
+
+def anode_physics(props: Dict[str, float]) -> Dict[str, Any]:
+    """Anode interface and SEI physics."""
+    s_thermo = props["stability"]
+    sei_growth = 0.5 + 0.5 * math.exp(np.clip(-s_thermo * 8.0, -20, 20))
+    r_sei = 1.0 + 0.4 * (1.0 - math.exp(np.clip(-s_thermo, -20, 20)))
+    loss = 0.7 + 0.3 * (1.0 - math.exp(np.clip(-s_thermo, -20, 20)))
+
+    return {
+        "thermodynamic": {"initial_loss_mult": loss},
+        "kinetic": {"sei_growth_mult": sei_growth},
+        "transport": {"resistance_drift_mult": r_sei},
+        "structural": {}
     }

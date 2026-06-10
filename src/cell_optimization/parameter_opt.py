@@ -58,11 +58,12 @@ def get_y(params: pybamm.ParameterValues, horizon=1800) -> np.ndarray:
         i_entries = sl["Current [A]"].entries
         t_entries = sl.t
 
-        # Use trapezoidal integration
-        energy = np.abs(np.trapezoid(v_entries * i_entries, t_entries)) / 3600.0 # Wh
+        # Use trapezoidal integration (fallback for NumPy < 1.25.0)
+        trapezoid = getattr(np, "trapezoid", getattr(np, "trapz", None))
+        energy = np.abs(trapezoid(v_entries * i_entries, t_entries)) / 3600.0 # Wh
 
         # Capacity (Ah)
-        capacity = np.abs(np.trapezoid(i_entries, t_entries)) / 3600.0
+        capacity = np.abs(trapezoid(i_entries, t_entries)) / 3600.0
 
         return np.array([v_final, energy, capacity, t_max])
     except Exception as e:
