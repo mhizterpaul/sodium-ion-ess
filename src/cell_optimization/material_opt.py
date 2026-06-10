@@ -104,7 +104,7 @@ class PhysicsModels:
     def cathode_perturbation(proxy_props: Dict[str, float], base_props: Dict[str, float], base_params: Any, base_formula: str, proxy_formula: str) -> tuple[Dict[str, Any], float]:
         """Calculates cathode deltas with semantically correct anchor naming."""
         realization = compute_chemical_realization(base_formula, proxy_formula, base_props, proxy_props)
-        deltas = derive_coupled_deltas(base_props, proxy_props, base_params)
+        deltas = derive_coupled_deltas(base_props, proxy_props)
         return deltas, realization
 
     @staticmethod

@@ -78,8 +78,7 @@ def compute_chemical_realization(
 
 def derive_coupled_deltas(
     base_props: Dict[str, float],
-    proxy_props: Dict[str, float],
-    base_params: Any
+    proxy_props: Dict[str, float]
 ) -> Dict[str, Dict[str, float]]:
     """
     Physics-only transformation layer.
