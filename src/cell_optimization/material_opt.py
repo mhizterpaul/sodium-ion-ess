@@ -39,7 +39,7 @@ DOPANTS = ["Mn", "Cr", "Ni"]
 
 # --- SCIENTIFIC & API CONFIG ---
 OQMD_URL = "https://oqmd.org/oqmdapi/formationenergy"
-MP_API_KEY = os.environ.get("MP_API_KEY", "4wUDc4LwwKXSRWxiE6DHQS40pG45g0q6")
+MP_API_KEY = os.environ.get("MP_API_KEY")
 CACHE_FILE = "material_cache.json"
 CACHE_VERSION = "v9"
 
