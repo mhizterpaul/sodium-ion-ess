@@ -29,8 +29,9 @@ from nfpp_sodium_ion.src.cell_parameters.cell_alpha import get_parameter_values
 
 # --- CONSTRAINED CHEMICAL SPACE ---
 ALLOWED_SALTS = {"NaBOB": "C4BNaO8", "NaTCP": "C5H3Cl3NNaO"}
-ALLOWED_FUNCTIONALIZATION = {"MTMS": "C4H12O3Si"}
-# Using NaFePO4 as base since it is available on OQMD.
+# Using SiO2 as a proxy for functionalization since it's on MP and related to silanes
+ALLOWED_FUNCTIONALIZATION = {"MTMS_proxy": "SiO2"}
+# Using NaFePO4 as base since it is available on MP.
 BASE_CATHODE_FORMULA = "NaFePO4"
 BASE_SALT_FORMULA = "NaPF6"
 BASE_ANODE_FORMULA = "C"
@@ -38,8 +39,9 @@ DOPANTS = ["Mn", "Cr", "Ni"]
 
 # --- SCIENTIFIC & API CONFIG ---
 OQMD_URL = "https://oqmd.org/oqmdapi/formationenergy"
+MP_API_KEY = os.environ.get("MP_API_KEY", "4wUDc4LwwKXSRWxiE6DHQS40pG45g0q6")
 CACHE_FILE = "material_cache.json"
-CACHE_VERSION = "v7"
+CACHE_VERSION = "v9"
 
 REQUIRED_CHANNELS = {"thermodynamic", "kinetic", "transport", "structural"}
 
@@ -92,7 +94,7 @@ class MaterialMappingEngine:
         self.cache = self._load_cache()
         self.session = self._setup_session() if requests else None
         self.base_params = get_parameter_values()
-        self.mp_key = os.environ.get("MP_API_KEY")
+        self.mp_key = MP_API_KEY
 
     def _setup_session(self):
         session = requests.Session()
@@ -122,13 +124,37 @@ class MaterialMappingEngine:
             if not np.isfinite(v): return False
         return True
 
-    def _resolve_material(self, formula: str) -> tuple[Optional[Dict[str, float]], float, str]:
+    def _resolve_material(self, formula: str, source_override: Optional[str] = None) -> tuple[Optional[Dict[str, float]], float, str]:
         cache_key = f"RESOLVE:{formula}:{CACHE_VERSION}"
         if cache_key in self.cache:
             return self.cache[cache_key]["props"], self.cache[cache_key]["conf"], self.cache[cache_key].get("source", "UNKNOWN")
 
-        props_oqmd = None
-        if self.session:
+        props, conf, source = None, 0.0, "NONE"
+
+        # --- Materials Project (MP) Resolve ---
+        if MPRester and self.mp_key and (source_override == "MP" or source_override is None):
+            try:
+                with MPRester(api_key=self.mp_key) as mpr:
+                    docs = mpr.materials.summary.search(
+                        formula=formula,
+                        fields=['material_id', 'formation_energy_per_atom', 'energy_above_hull', 'band_gap', 'volume', 'nsites']
+                    )
+                    if docs:
+                        docs.sort(key=lambda d: d.energy_above_hull)
+                        best = docs[0]
+                        props = {
+                            "stability": float(best.energy_above_hull),
+                            "formation_energy": float(best.formation_energy_per_atom),
+                            "band_gap": float(best.band_gap if best.band_gap is not None else 0.0),
+                            "volume_per_atom": float(best.volume / best.nsites if best.nsites else 15.0),
+                            "natoms": float(best.nsites)
+                        }
+                        conf, source = 1.0, "MATERIALS_PROJECT"
+            except Exception as e:
+                logging.warning(f"MP query failed for {formula}: {e}")
+
+        # --- OQMD Resolve ---
+        if props is None and self.session and (source_override == "OQMD" or source_override is None):
             try:
                 params = {"composition": formula, "limit": 10, "fields": "delta_e,stability,band_gap,volume,natoms"}
                 r = self.session.get(OQMD_URL, params=params, timeout=15)
@@ -137,31 +163,29 @@ class MaterialMappingEngine:
                 if data:
                     data.sort(key=lambda x: float(x.get("stability", 1e9)))
                     best = data[0]
-                    props_oqmd = {
+                    props = {
                         "stability": float(best.get("stability", 0.1)),
                         "formation_energy": float(best.get("delta_e", 0.0)),
                         "band_gap": float(best.get("band_gap", 0.0)),
                         "volume_per_atom": float(best.get("volume", 1.0)) / float(best.get("natoms", 1.0)),
                         "natoms": float(best.get("natoms", 1.0))
                     }
+                    conf, source = 1.0, "OQMD"
             except Exception as e:
                 logging.warning(f"OQMD query failed for {formula}: {e}")
 
-        props, conf, source = None, 0.0, "NONE"
-        if props_oqmd:
-            props, conf, source = props_oqmd, 1.0, "OQMD"
-            props["uncertainty"] = 0.05
-
         if props and self._valid_props(props):
+            props["uncertainty"] = 0.05
             self.cache[cache_key] = {"props": props, "conf": conf, "source": source}
 
         return props, conf, source
 
     def run(self):
-        print(f"Executing Unified Physics Materials Mapping (Strict API Data Resolve, No Fallbacks)...")
+        print(f"Executing Unified Physics Materials Mapping (Strict MP for Cathode)...")
         system = {"Cathode_Dopant": [], "Salt": [], "Functionalization": []}
 
-        base_cathode, _, _ = self._resolve_material(BASE_CATHODE_FORMULA)
+        # Cathode materials EXCLUSIVELY from MP
+        base_cathode, _, _ = self._resolve_material(BASE_CATHODE_FORMULA, source_override="MP")
         base_salt, _, _ = self._resolve_material(BASE_SALT_FORMULA)
         base_anode, _, _ = self._resolve_material(BASE_ANODE_FORMULA)
 
@@ -169,10 +193,10 @@ class MaterialMappingEngine:
             logging.error("Failed to resolve base material properties from API. Aborting mapping.")
             return system
 
-        # --- Dopants ---
+        # --- Dopants (Strictly from MP) ---
         for d in DOPANTS:
             proxy_formula = f"Na{d}PO4"
-            proxy_props, conf, src = self._resolve_material(proxy_formula)
+            proxy_props, conf, src = self._resolve_material(proxy_formula, source_override="MP")
             if not proxy_props: continue
 
             realization = compute_chemical_realization(BASE_CATHODE_FORMULA, proxy_formula, base_cathode, proxy_props)
