@@ -2,6 +2,7 @@ import numpy as np
 import pybamm
 import logging
 import math
+import json
 from typing import Dict, List, Any, Optional
 from nfpp_sodium_ion.src.cell_parameters.cell_alpha import get_parameter_values
 from src.cell_optimization.material_opt import MaterialMappingEngine, MaterialCandidate
@@ -172,5 +173,4 @@ if __name__ == "__main__":
     engine = MaterialMappingEngine()
     materials = engine.run()
     result = optimize(materials)
-    import json
     print(json.dumps(result, indent=2))
