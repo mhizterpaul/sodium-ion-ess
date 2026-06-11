@@ -38,7 +38,7 @@ class ParamTransform:
         return params
 
 def get_y(params: pybamm.ParameterValues, horizon=1800) -> np.ndarray:
-    """Runs PyBaMM simulation and extracts performance metrics."""
+    """Runs PyBaMM simulation and extracts performance metrics for optimization guidance."""
     # Ensure physical consistency for SPM
     c_max_n = params["Maximum concentration in negative electrode [mol.m-3]"]
     c_max_p = params["Maximum concentration in positive electrode [mol.m-3]"]
@@ -53,12 +53,11 @@ def get_y(params: pybamm.ParameterValues, horizon=1800) -> np.ndarray:
         v_final = float(sl["Terminal voltage [V]"].entries[-1])
         t_max = float(np.max(sl["Cell temperature [K]"].entries))
 
-        # Energy = int(V * I dt)
+        # Performance extraction for internal optimizer logic
         v_entries = sl["Terminal voltage [V]"].entries
         i_entries = sl["Current [A]"].entries
         t_entries = sl.t
 
-        # Use trapezoidal integration (fallback for NumPy < 1.25.0)
         trapezoid = getattr(np, "trapezoid", getattr(np, "trapz", None))
         energy_wh = np.abs(trapezoid(v_entries * i_entries, t_entries)) / 3600.0
         capacity_ah = np.abs(trapezoid(i_entries, t_entries)) / 3600.0
@@ -68,17 +67,13 @@ def get_y(params: pybamm.ParameterValues, horizon=1800) -> np.ndarray:
         logging.warning(f"Simulation failed: {e}")
         return np.array([0.0, 0.0, 0.0, 400.0])
 
-def compute_sensitivity(theta: np.ndarray, materials: List[MaterialCandidate], structural_keys: List[str]) -> np.ndarray:
-    """
-    Computes the parameter Jacobian S_{ij} = dy_i / dtheta_j
-    theta: structural parameter vector
-    materials: selected materials
-    """
+def compute_sensitivity(theta: np.ndarray, materials: List[MaterialCandidate], design_keys: List[str]) -> np.ndarray:
+    """Computes the parameter Jacobian S_{ij} = dy_i / dtheta_j"""
     base_params_vals = get_parameter_values()
 
     def get_params(th):
         transform = ParamTransform(base_params_vals)
-        for i, key in enumerate(structural_keys):
+        for i, key in enumerate(design_keys):
             transform.base[key] = th[i]
         for m in materials:
             deltas = m.to_pybamm_delta()
@@ -102,18 +97,14 @@ def compute_sensitivity(theta: np.ndarray, materials: List[MaterialCandidate], s
     return S
 
 def pybamm_loss(y: np.ndarray) -> float:
-    """
-    Optimization metric.
-    y = [voltage, energy, capacity, t_max]
-    """
-    # Maximize energy, maximize capacity, minimize t_max
+    """Optimization metric weights (Max energy/capacity, Min temperature)."""
     weights = np.array([-1.0, -10.0, -10.0, 0.1])
     return float(np.dot(y, weights))
 
 def optimize(materials_db: Dict[str, List[MaterialCandidate]]):
     """
     Main optimization loop.
-    Iterates over material combinations and optimizes cell parameters.
+    Optimizes cell design parameters and material selection.
     """
     design_keys = [
         "Positive electrode thickness [m]",
@@ -122,7 +113,6 @@ def optimize(materials_db: Dict[str, List[MaterialCandidate]]):
         "Negative electrode porosity",
         "Typical electrolyte concentration [mol.m-3]"
     ]
-    # Initial guess
     theta = np.array([1.2e-4, 1.2e-4, 0.3, 0.3, 1000.0])
 
     best_overall_loss = float('inf')
@@ -137,7 +127,6 @@ def optimize(materials_db: Dict[str, List[MaterialCandidate]]):
             for func in funcs:
                 selected_materials = [m for m in [cathode, salt, func] if m is not None]
 
-                # Optimize parameters for this material set
                 curr_theta = theta.copy()
                 for i in range(2):
                     S = compute_sensitivity(curr_theta, selected_materials, design_keys)
@@ -158,7 +147,6 @@ def optimize(materials_db: Dict[str, List[MaterialCandidate]]):
                     grad = weights @ S
                     curr_theta -= 0.05 * grad * curr_theta
 
-                    # Physical constraints
                     curr_theta[0:2] = np.clip(curr_theta[0:2], 5e-5, 3e-4)
                     curr_theta[2:4] = np.clip(curr_theta[2:4], 0.2, 0.7)
                     curr_theta[4] = np.clip(curr_theta[4], 500.0, 2000.0)
@@ -175,12 +163,6 @@ def optimize(materials_db: Dict[str, List[MaterialCandidate]]):
                         },
                         "cell_parameters": {
                             **dict(zip(design_keys, curr_theta.tolist())),
-                        },
-                        "performance_metrics": {
-                            "terminal_voltage_v": float(final_y[0]),
-                            "energy_wh": float(final_y[1]),
-                            "capacity_ah": float(final_y[2]),
-                            "max_temperature_k": float(final_y[3])
                         }
                     }
 
