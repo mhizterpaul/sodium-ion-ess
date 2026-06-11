@@ -3,7 +3,8 @@ import pybamm
 import logging
 import math
 import json
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Callable
+from scipy.optimize import minimize
 from nfpp_sodium_ion.src.cell_parameters.cell_alpha import get_parameter_values
 from src.cell_optimization.material_opt import MaterialMappingEngine, MaterialCandidate
 
@@ -40,10 +41,30 @@ class ParamTransform:
                     params[name] = base + a
         return params
 
-def get_y(params: pybamm.ParameterValues, horizon=1800) -> np.ndarray:
-    """Runs PyBaMM simulation and extracts composite performance metrics."""
-    options = {"thermal": "isothermal"}
-    model = pybamm.lithium_ion.SPM(options)
+def get_y(theta: np.ndarray, materials: List[MaterialCandidate], design_keys: List[str]) -> np.ndarray:
+    """Runs PyBaMM simulation and extracts performance metrics for a specific theta/m configuration."""
+    base_params = get_parameter_values()
+    transform = ParamTransform(base_params)
+
+    # 1. Apply Continuous Design Parameters (theta)
+    for i, key in enumerate(design_keys):
+        if key in transform.base:
+            transform.base[key] = theta[i]
+
+    # 2. Apply Compositional Constraints (e.g. Conductive Carbon effect)
+    if "Positive electrode conductive carbon fraction" in design_keys:
+        carbon_idx = design_keys.index("Positive electrode conductive carbon fraction")
+        transform.add_multiplier("Positive electrode conductivity [S.m-1]", theta[carbon_idx] / 0.08)
+
+    # 3. Apply Discrete Material Deltas (m)
+    for m in materials:
+        deltas = m.to_pybamm_delta()
+        for name, (mode, val) in deltas.items():
+            if mode == "multiplier": transform.add_multiplier(name, val)
+            else: transform.add_additive(name, val)
+
+    params = transform.evaluate()
+    model = pybamm.lithium_ion.SPM({"thermal": "isothermal"})
     solver = pybamm.CasadiSolver(mode="safe")
 
     if "Cell volume [m3]" not in params:
@@ -52,10 +73,11 @@ def get_y(params: pybamm.ParameterValues, horizon=1800) -> np.ndarray:
     sim = pybamm.Simulation(model, parameter_values=params, solver=solver)
 
     try:
-        sl = sim.solve([0, horizon], inputs={"Current [A]": 1.0})
+        sl = sim.solve([0, 3600], inputs={"Current [A]": 1.0})
         v_entries = sl["Terminal voltage [V]"].entries
         i_entries = sl["Current [A]"].entries
         t_entries = sl.t
+
         v_final = float(v_entries[-1])
         trapezoid = getattr(np, "trapezoid", getattr(np, "trapz", None))
         energy_wh = np.abs(trapezoid(v_entries * i_entries, t_entries)) / 3600.0
@@ -65,126 +87,134 @@ def get_y(params: pybamm.ParameterValues, horizon=1800) -> np.ndarray:
         # Degradation proxy: max interfacial current density
         j_max = float(np.max(np.abs(sl["X-averaged negative electrode interfacial current density [A.m-2]"].entries)))
 
-        # Composite Result Vector: [Voltage, Energy, Capacity, Power, Efficiency, -Degradation]
-        return np.array([v_final, energy_wh, capacity_ah, power_w, eff, -j_max])
-    except Exception as e:
-        logging.warning(f"Simulation failed: {e}")
-        return np.array([0.0, 0.0, 0.0, 0.0, 0.0, -1e6])
+        # [Energy, Power, Capacity, Efficiency, -Degradation]
+        return np.array([energy_wh, power_w, capacity_ah, eff, -j_max])
+    except Exception:
+        return np.array([0.0, 0.0, 0.0, 0.0, -1e6])
 
-def get_params_for_theta(theta, materials, design_keys):
-    transform = ParamTransform(get_parameter_values())
-    for i, key in enumerate(design_keys):
-        if key in transform.base:
-            transform.base[key] = theta[i]
+# --- OBJECTIVE WRAPPERS ---
+def energy_obj(theta, materials, keys): return -get_y(theta, materials, keys)[0]
+def power_obj(theta, materials, keys): return -get_y(theta, materials, keys)[1]
+def capacity_obj(theta, materials, keys): return -get_y(theta, materials, keys)[2]
+def efficiency_obj(theta, materials, keys): return -get_y(theta, materials, keys)[3]
+def stability_obj(theta, materials, keys): return -get_y(theta, materials, keys)[4]
 
-    # Material-specific composition mapping
-    if "Positive electrode conductive carbon fraction" in design_keys:
-        carbon_idx = design_keys.index("Positive electrode conductive carbon fraction")
-        # Baseline conductivity 50 S/m is for 0.08 fraction
-        transform.add_multiplier("Positive electrode conductivity [S.m-1]", theta[carbon_idx] / 0.08)
+def optimize_objective(theta_init, materials, keys, obj_fn, bounds):
+    """Inner loop: Optimize continuous design θ for a single objective function."""
+    res = minimize(obj_fn, theta_init, args=(materials, keys), method='L-BFGS-B', bounds=bounds, options={'maxiter': 5})
+    return res.x, -res.fun
 
-    for m in materials:
-        deltas = m.to_pybamm_delta()
-        for name, (mode, val) in deltas.items():
-            if mode == "multiplier": transform.add_multiplier(name, val)
-            else: transform.add_additive(name, val)
-    return transform.evaluate()
+def compute_envelope(materials, design_keys, theta_init, bounds):
+    """
+    For a given material set m, find the Pareto optimal performance values
+    for each independent objective.
+    """
+    envelope = {}
 
-def compute_sensitivity(theta: np.ndarray, materials: List[MaterialCandidate], design_keys: List[str]) -> np.ndarray:
-    """Computes the parameter Jacobian S_{ij} = dy_i / dtheta_j for composite metrics."""
-    y_base = get_y(get_params_for_theta(theta, materials, design_keys))
-    n_y = len(y_base)
-    n_theta = len(theta)
-    S = np.zeros((n_y, n_theta))
-    eps = 1e-4
+    # 1. Energy Optimum
+    _, val_e = optimize_objective(theta_init, materials, design_keys, energy_obj, bounds)
+    envelope["energy"] = val_e
 
-    for j in range(n_theta):
-        th_plus = theta.copy()
-        h = eps * (abs(theta[j]) + 1e-9)
-        th_plus[j] += h
-        y_plus = get_y(get_params_for_theta(th_plus, materials, design_keys))
-        S[:, j] = (y_plus - y_base) / h
+    # 2. Power Optimum
+    _, val_p = optimize_objective(theta_init, materials, design_keys, power_obj, bounds)
+    envelope["power"] = val_p
 
-    return S
+    # 3. Capacity Optimum
+    _, val_c = optimize_objective(theta_init, materials, design_keys, capacity_obj, bounds)
+    envelope["capacity"] = val_c
 
-def pybamm_loss(y: np.ndarray) -> float:
-    """Tightened composite objective function."""
-    # Weights for: [Voltage, Energy, Capacity, Power, Efficiency, Stability_Proxy]
-    weights = np.array([-1.0, -10.0, -10.0, -2.0, -1.0, -0.001])
-    return float(np.dot(y, weights))
+    # 4. Efficiency Optimum
+    _, val_eff = optimize_objective(theta_init, materials, design_keys, efficiency_obj, bounds)
+    envelope["efficiency"] = val_eff
+
+    # 5. Stability Optimum
+    _, val_s = optimize_objective(theta_init, materials, design_keys, stability_obj, bounds)
+    envelope["stability"] = val_s
+
+    return envelope
 
 def optimize(materials_db: Dict[str, List[MaterialCandidate]]):
     """
-    Optimization loop over expanded design space.
-    Structural (Lc, La, ec, ea, esep, tau, loading, rp).
-    Material (NFPP fraction, Carbon fraction, Electrolyte).
+    Outer loop: Material candidate evaluation and ranking.
+    Compares the achievable performance envelopes of different material systems.
     """
     design_keys = [
-        "Positive electrode thickness [m]",                # Lc
-        "Negative electrode thickness [m]",                # La
-        "Positive electrode porosity",                     # ec
-        "Negative electrode porosity",                     # ea
-        "Separator porosity",                             # esep
-        "Positive electrode Bruggeman coefficient (electrolyte)", # tau
-        "Negative electrode Bruggeman coefficient (electrolyte)", # tau
-        "Positive electrode active material volume fraction", # NFPP loading
-        "Positive particle radius [m]",                    # rp
-        "Negative particle radius [m]",                    # rp
-        "Typical electrolyte concentration [mol.m-3]",      # Material
-        "Positive electrode conductive carbon fraction"     # Material
+        "Positive electrode thickness [m]",
+        "Negative electrode thickness [m]",
+        "Positive electrode porosity",
+        "Negative electrode porosity",
+        "Separator porosity",
+        "Positive electrode Bruggeman coefficient (electrolyte)",
+        "Negative electrode Bruggeman coefficient (electrolyte)",
+        "Positive electrode active material volume fraction",
+        "Positive particle radius [m]",
+        "Negative particle radius [m]",
+        "Typical electrolyte concentration [mol.m-3]",
+        "Positive electrode conductive carbon fraction"
     ]
-    # Initial guess
-    theta = np.array([1e-4, 1.2e-4, 0.3, 0.3, 0.5, 1.5, 1.5, 0.65, 1e-6, 5e-6, 1000.0, 0.08])
+    theta_init = np.array([1e-4, 1.2e-4, 0.3, 0.3, 0.5, 1.5, 1.5, 0.65, 1e-6, 5e-6, 1000.0, 0.08])
+    bounds = [
+        (5e-5, 3e-4), (5e-5, 3e-4), # thickness
+        (0.2, 0.7), (0.2, 0.7), (0.2, 0.7), # porosity
+        (1.0, 4.0), (1.0, 4.0), # tortuosity
+        (0.4, 0.9), # loading
+        (1e-7, 1e-5), (1e-7, 1e-5), # radius
+        (500.0, 2000.0), # concentration
+        (0.01, 0.2) # carbon
+    ]
 
-    best_overall_loss = float('inf')
+    best_score = -float('inf')
     best_config = {}
 
     cathodes = materials_db.get("Cathode_Dopant", []) or [None]
     salts = materials_db.get("Salt", []) or [None]
     funcs = materials_db.get("Functionalization", []) or [None]
 
+    # Reference values for normalization (rough estimates)
+    # Energy: 1.3 Wh, Power: 2.5 W, Capacity: 0.5 Ah, Efficiency: 0.9, Stability: -j_max (-20 A/m2)
+    refs = np.array([1.3, 2.5, 0.5, 0.9, 20.0])
+    weights = np.array([1.0, 0.5, 1.0, 0.5, 0.2]) # Compose weights
+
     for cathode in cathodes:
         for salt in salts:
             for func in funcs:
-                selected_materials = [m for m in [cathode, salt, func] if m is not None]
-                curr_theta = theta.copy()
+                m_set = [m for m in [cathode, salt, func] if m is not None]
 
-                for i in range(2):
-                    S = compute_sensitivity(curr_theta, selected_materials, design_keys)
-                    weights = np.array([-1.0, -10.0, -10.0, -2.0, -1.0, -0.001])
-                    grad = weights @ S
+                print(f"Evaluating Material System: {[m.name for m in m_set if m]}")
+                env = compute_envelope(m_set, design_keys, theta_init, bounds)
 
-                    update = 0.05 * grad * curr_theta
-                    curr_theta -= update
+                # Ranking score based on normalized envelope vector
+                # Higher is better for all: [Energy, Power, Capacity, Efficiency, -j_max]
+                perf_vector = np.array([
+                    env["energy"], env["power"], env["capacity"],
+                    env["efficiency"], env["stability"]
+                ])
 
-                    # Physical Manifold Constraints
-                    curr_theta[0:2] = np.clip(curr_theta[0:2], 5e-5, 3e-4) # thickness
-                    curr_theta[2:5] = np.clip(curr_theta[2:5], 0.2, 0.7)  # porosity
-                    curr_theta[5:7] = np.clip(curr_theta[5:7], 1.0, 4.0)  # tortuosity
-                    curr_theta[7] = np.clip(curr_theta[7], 0.4, 0.9)     # loading
-                    curr_theta[8:10] = np.clip(curr_theta[8:10], 1e-7, 1e-5) # radius
-                    curr_theta[10] = np.clip(curr_theta[10], 500.0, 2000.0) # electrolyte
-                    curr_theta[11] = np.clip(curr_theta[11], 0.01, 0.2)  # carbon fraction
+                # Normalize metrics by reference values
+                # env["stability"] is -j_max (e.g. -20).
+                # Dividing -20 / 20 = -1.
+                # Weights: [1.0, 0.5, 1.0, 0.5, 0.2]
+                norm_perf = perf_vector / refs
+                score = np.dot(norm_perf, weights)
 
-                    # Composition constraint: porosity + loading + carbon < 1.0
-                    total_vol = curr_theta[2] + curr_theta[7] + curr_theta[11]
-                    if total_vol > 0.95:
-                        scale = 0.95 / total_vol
-                        curr_theta[2] *= scale
-                        curr_theta[7] *= scale
-                        curr_theta[11] *= scale
+                if score > best_score:
+                    best_score = score
+                    # For the winning material, find a balanced design point
+                    # by optimizing the weighted composite once.
+                    def composite_obj(th, ms, ks):
+                        y = get_y(th, ms, ks)
+                        # [energy, power, capacity, eff, -j_max]
+                        w = np.array([1.0, 0.5, 1.0, 0.5, 0.001]) # small weight for stability
+                        return -np.dot(y, w)
 
-                final_y = get_y(get_params_for_theta(curr_theta, selected_materials, design_keys))
-                loss = pybamm_loss(final_y)
+                    theta_opt, _ = optimize_objective(theta_init, m_set, design_keys, composite_obj, bounds)
 
-                if loss < best_overall_loss:
-                    best_overall_loss = loss
                     best_config = {
                         "materials": {
                             "cathode": cathode.name if cathode else "Base",
                             "electrolyte": f"{salt.name if salt else 'Base'} + {func.name if func else 'None'}"
                         },
-                        "cell_parameters": dict(zip(design_keys, curr_theta.tolist()))
+                        "cell_parameters": dict(zip(design_keys, theta_opt.tolist()))
                     }
 
     return best_config
