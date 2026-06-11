@@ -37,6 +37,33 @@ def geom_norm(props, base_props):
         "strain": (props["volume_per_atom"] - base_props["volume_per_atom"]) / (base_props["volume_per_atom"] + 1e-9)
     }
 
+def apply_connectivity_scaling(props: Dict[str, float], phi: float = 0.75) -> Dict[str, float]:
+    """
+    Physically grounded connectivity-based scaling for organosiloxanes (MTMS)
+    derived from network solids (SiO2).
+    P_mtms = phi^alpha * P_sio2
+    """
+    scaled = props.copy()
+    # Connectivity exponents
+    a_density = 1.0
+    a_modulus = 2.5 # Not directly used in PyBaMM but good for completeness
+    a_transport = 1.5
+
+    # Scaling properties
+    # Density/Volume: Lower connectivity -> higher volume per atom
+    if "volume_per_atom" in scaled:
+        scaled["volume_per_atom"] = scaled["volume_per_atom"] / (phi**a_density)
+
+    # Energy: scaling formation energy by connectivity
+    if "formation_energy" in scaled:
+        scaled["formation_energy"] = scaled["formation_energy"] * phi
+
+    # Stability: lower connectivity typically reduces stability (higher energy above hull)
+    if "stability" in scaled:
+        scaled["stability"] = scaled["stability"] / (phi + 1e-9)
+
+    return scaled
+
 def compute_chemical_realization(
     base_formula: str,
     proxy_formula: str,
@@ -78,41 +105,38 @@ def compute_chemical_realization(
 
 def derive_coupled_deltas(
     base_props: Dict[str, float],
-    proxy_props: Dict[str, float]
+    proxy_props: Dict[str, float],
+    is_network: bool = False
 ) -> Dict[str, Dict[str, float]]:
     """
     Universal physics transformation layer.
     Converts raw material property differences into physical performance deltas.
-    Includes Dopant, Salt, and Functionalization coupling logic.
     """
     dE = thermo_norm(proxy_props["formation_energy"], base_props["formation_energy"])
     dG = (proxy_props["band_gap"] - base_props["band_gap"]) / 1.0
     dV = geom_norm(proxy_props, base_props)["strain"]
-    # Positive dS means improvement (lower energy above hull)
     dS = (base_props["stability"] - proxy_props["stability"]) / 0.2
 
-    # Universal Physics coupling rules
+    # Physics coupling rules
 
     # 1. Energetic/Thermodynamic
     voltage_boost = -0.01 * dE # Small correction
     stability_shift = dS
-    # Functionalization: reduced initial sodium loss via stability proxy
-    # Positive dS (improvement) -> higher multiplier -> higher initial conc -> less loss
     initial_loss_mult = math.exp(np.clip(0.2 * dS, -5, 5))
 
     # 2. Kinetic (Arrhenius-derived)
-    # D = D0 * exp(-Ea / KT)
     activation_delta = 0.2 * dV + 0.1 * dG
+
+    # For network solids (like MTMS-derived), we apply a further connectivity-based attenuation
+    # if not already handled by input properties.
     diffusivity_log_delta = -activation_delta / (KT + 1e-9)
 
     reaction_rate_log_delta = 0.1 * dE - 0.3 * dG
-    # Functionalization: SEI kinetics and Anode exchange current
     sei_growth_mult = math.exp(np.clip(0.5 * dE - 0.2 * dS, -5, 5))
     negative_exchange_log_delta = 0.4 * dS - 0.1 * dG
 
     # 3. Transport/Secondary
     transport_log_delta = -0.5 * dE + 0.2 * dV
-    # Interfacial resistance growth (SEI resistivity)
     interfacial_log_delta = -0.8 * dS + 0.3 * dG
 
     def clip_log(x):

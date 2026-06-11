@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from src.cell_optimization.chem_regularization import (
     compute_chemical_realization,
     derive_coupled_deltas,
+    apply_connectivity_scaling,
     KT
 )
 
@@ -41,7 +42,7 @@ DOPANTS = ["Mn", "Cr", "Ni"]
 # --- SCIENTIFIC & API CONFIG ---
 OQMD_URL = "https://oqmd.org/oqmdapi/formationenergy"
 CACHE_FILE = "material_cache.json"
-CACHE_VERSION = "v12"
+CACHE_VERSION = "v13"
 
 REQUIRED_CHANNELS = {"thermodynamic", "kinetic", "transport", "structural"}
 
@@ -68,26 +69,29 @@ class MaterialCandidate:
             logging.error(f"MaterialCandidate {self.name} ({self.category}) has malformed projected_delta schema.")
 
     def to_pybamm_delta(self) -> Dict[str, Any]:
-        """Maps derived deltas to PyBaMM parameter names, regularized by realization."""
+        """Maps derived deltas to PyBaMM parameter names."""
         mapping = {}
         td = self.projected_delta.get("thermodynamic", {})
         kt = self.projected_delta.get("kinetic", {})
         tr = self.projected_delta.get("transport", {})
 
-        r = float(self.realization)
+        # NOTE: realization is no longer used as a heuristic scaling factor
+        # for PyBaMM deltas because we've moved to a physically grounded
+        # connectivity model for proxies and proper stoichiometry distance
+        # for realization itself.
 
         if self.category == "Cathode_Dopant":
-            mapping["Positive electrode OCP [V]"] = ("additive", td.get("voltage_boost", 0.0) * r)
-            mapping["Positive particle diffusivity [m2.s-1]"] = ("multiplier", math.exp(tr.get("diffusivity_log_delta", 0.0) * r))
-            mapping["Positive electrode exchange-current density [A.m-2]"] = ("multiplier", math.exp(kt.get("reaction_rate_log_delta", 0.0) * r))
+            mapping["Positive electrode OCP [V]"] = ("additive", td.get("voltage_boost", 0.0))
+            mapping["Positive particle diffusivity [m2.s-1]"] = ("multiplier", math.exp(tr.get("diffusivity_log_delta", 0.0)))
+            mapping["Positive electrode exchange-current density [A.m-2]"] = ("multiplier", math.exp(kt.get("reaction_rate_log_delta", 0.0)))
         elif self.category == "Salt":
-            mapping["Electrolyte conductivity [S.m-1]"] = ("multiplier", math.exp(math.log(tr.get("conductivity_mult", 1.0)) * r))
-            mapping["Cation transference number"] = ("multiplier", math.exp(math.log(tr.get("ion_transference_mult", 1.0)) * r))
+            mapping["Electrolyte conductivity [S.m-1]"] = ("multiplier", tr.get("conductivity_mult", 1.0))
+            mapping["Cation transference number"] = ("multiplier", tr.get("ion_transference_mult", 1.0))
         elif self.category == "Functionalization":
-            mapping["SEI reaction exchange current density [A.m-2]"] = ("multiplier", math.exp(math.log(kt.get("sei_growth_mult", 1.0)) * r))
-            mapping["Initial concentration in negative electrode [mol.m-3]"] = ("multiplier", math.exp(math.log(td.get("initial_loss_mult", 1.0)) * r))
-            mapping["SEI resistivity [Ohm.m]"] = ("multiplier", math.exp(math.log(tr.get("resistance_drift_mult", 1.0)) * r))
-            mapping["Negative electrode exchange-current density [A.m-2]"] = ("multiplier", math.exp(kt.get("negative_exchange_log_delta", 0.0) * r))
+            mapping["SEI reaction exchange current density [A.m-2]"] = ("multiplier", kt.get("sei_growth_mult", 1.0))
+            mapping["Initial concentration in negative electrode [mol.m-3]"] = ("multiplier", td.get("initial_loss_mult", 1.0))
+            mapping["SEI resistivity [Ohm.m]"] = ("multiplier", tr.get("resistance_drift_mult", 1.0))
+            mapping["Negative electrode exchange-current density [A.m-2]"] = ("multiplier", math.exp(kt.get("negative_exchange_log_delta", 0.0)))
         return mapping
 
 class MaterialMappingEngine:
@@ -197,7 +201,7 @@ class MaterialMappingEngine:
         return props, conf, source
 
     def run(self):
-        print(f"Executing Weighted API Materials Mapping (MP/OQMD Fuse)...")
+        print(f"Executing Physics-Constrained Materials Mapping (Connectivity Scaling)...")
         system = {"Cathode_Dopant": [], "Salt": [], "Functionalization": []}
 
         # --- Base Cathode Resolution ---
@@ -242,6 +246,7 @@ class MaterialMappingEngine:
         for name, formulas in ALLOWED_FUNCTIONALIZATION.items():
             resolved_props = None
             resolved_formula = None
+            source_was_proxy = False
             for formula in formulas:
                 resolved_props, conf, src = self._resolve_material(formula)
                 if resolved_props:
@@ -249,14 +254,18 @@ class MaterialMappingEngine:
                     break
 
             if not resolved_props:
-                # Fallback to SiO2 proxy if no hits for actual MTMS formulas
+                # Fallback to SiO2 proxy (NETWORK_SOLID)
                 resolved_props, conf, src = self._resolve_material(MTMS_PROXY)
-                resolved_formula = MTMS_PROXY
+                if resolved_props:
+                    # Apply connectivity scaling to transform SiO2 -> MTMS properties
+                    resolved_props = apply_connectivity_scaling(resolved_props, phi=0.75)
+                    resolved_formula = MTMS_PROXY
+                    source_was_proxy = True
 
             if not resolved_props: continue
 
             realization = compute_chemical_realization(BASE_ANODE_FORMULA, resolved_formula, base_anode, resolved_props)
-            deltas = derive_coupled_deltas(base_anode, resolved_props)
+            deltas = derive_coupled_deltas(base_anode, resolved_props, is_network=source_was_proxy)
             system["Functionalization"].append(MaterialCandidate(
                 name=name, category="Functionalization", composition=resolved_formula, properties=resolved_props,
                 projected_delta=deltas, confidence=conf, realization=realization, uncertainty=0.01, provenance=src))

@@ -40,11 +40,8 @@ class ParamTransform:
 
 def get_y(params: pybamm.ParameterValues, horizon=1800) -> np.ndarray:
     """Runs PyBaMM simulation and extracts performance metrics for optimization guidance."""
-    # Ensure physical consistency for SPM
-    c_max_n = params["Maximum concentration in negative electrode [mol.m-3]"]
-    c_max_p = params["Maximum concentration in positive electrode [mol.m-3]"]
-    params["Initial concentration in negative electrode [mol.m-3]"] = 0.1 * c_max_n
-    params["Initial concentration in positive electrode [mol.m-3]"] = 0.9 * c_max_p
+    # Note: We do NOT hard-reset initial concentrations here as it would overwrite material-derived deltas.
+    # We assume the base_params or the ParamTransform already sets a sensible SOC (e.g. 10%).
 
     model = pybamm.lithium_ion.SPM()
     solver = pybamm.CasadiSolver(mode="safe")
