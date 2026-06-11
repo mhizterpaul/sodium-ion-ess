@@ -97,7 +97,8 @@ def derive_coupled_deltas(
     voltage_boost = -0.01 * dE # Small correction
     stability_shift = dS
     # Functionalization: reduced initial sodium loss via stability proxy
-    initial_loss_mult = math.exp(np.clip(-0.2 * dS, -5, 5))
+    # Positive dS (improvement) -> higher multiplier -> higher initial conc -> less loss
+    initial_loss_mult = math.exp(np.clip(0.2 * dS, -5, 5))
 
     # 2. Kinetic (Arrhenius-derived)
     # D = D0 * exp(-Ea / KT)
