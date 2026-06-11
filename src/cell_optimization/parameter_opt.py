@@ -12,7 +12,7 @@ logging.basicConfig(level=logging.INFO)
 class ParamTransform:
     """Pure parameter wrapper to prevent dictionary mutation leakage."""
     def __init__(self, base_values):
-        self.base = base_values
+        self.base = base_values.copy()
         self.multiplier_map = {}
         self.additive_map = {}
 
@@ -25,62 +25,74 @@ class ParamTransform:
     def evaluate(self):
         params = pybamm.ParameterValues(self.base)
         for name, m in self.multiplier_map.items():
-            base = params[name]
-            if callable(base):
-                params[name] = (lambda *args, b=base, mult=m, **kwargs: b(*args, **kwargs) * mult)
-            else:
-                params[name] = base * m
+            if name in params:
+                base = params[name]
+                if callable(base):
+                    params[name] = (lambda *args, b=base, mult=m, **kwargs: b(*args, **kwargs) * mult)
+                else:
+                    params[name] = base * m
         for name, a in self.additive_map.items():
-            base = params[name]
-            if callable(base):
-                params[name] = (lambda *args, b=base, add=a, **kwargs: b(*args, **kwargs) + add)
-            else:
-                params[name] = base + a
+            if name in params:
+                base = params[name]
+                if callable(base):
+                    params[name] = (lambda *args, b=base, add=a, **kwargs: b(*args, **kwargs) + add)
+                else:
+                    params[name] = base + a
         return params
 
 def get_y(params: pybamm.ParameterValues, horizon=1800) -> np.ndarray:
-    """Runs PyBaMM simulation and extracts performance metrics for optimization guidance."""
-    # Note: We do NOT hard-reset initial concentrations here as it would overwrite material-derived deltas.
-    # We assume the base_params or the ParamTransform already sets a sensible SOC (e.g. 10%).
-
-    model = pybamm.lithium_ion.SPM()
+    """Runs PyBaMM simulation and extracts composite performance metrics."""
+    # Using isothermal model for now to avoid cooling surface issues in the custom param set
+    options = {
+        "thermal": "isothermal"
+    }
+    model = pybamm.lithium_ion.SPM(options)
     solver = pybamm.CasadiSolver(mode="safe")
+
     sim = pybamm.Simulation(model, parameter_values=params, solver=solver)
+
     try:
         sl = sim.solve([0, horizon], inputs={"Current [A]": 1.0})
-        v_final = float(sl["Terminal voltage [V]"].entries[-1])
-        t_max = float(np.max(sl["Cell temperature [K]"].entries))
 
-        # Performance extraction for internal optimizer logic
         v_entries = sl["Terminal voltage [V]"].entries
         i_entries = sl["Current [A]"].entries
         t_entries = sl.t
+
+        v_final = float(v_entries[-1])
 
         trapezoid = getattr(np, "trapezoid", getattr(np, "trapz", None))
         energy_wh = np.abs(trapezoid(v_entries * i_entries, t_entries)) / 3600.0
         capacity_ah = np.abs(trapezoid(i_entries, t_entries)) / 3600.0
 
-        return np.array([v_final, energy_wh, capacity_ah, t_max])
+        # Performance Targets
+        power_w = np.mean(v_entries * i_entries)
+        # Efficiency proxy: transport efficiency in negative electrode
+        eff = float(np.mean(sl["X-averaged negative electrode transport efficiency"].entries))
+        # Degradation proxy: max local current density (proportional to SEI growth)
+        j_max = float(np.max(np.abs(sl["X-averaged negative electrode interfacial current density [A.m-2]"].entries)))
+
+        # Composite Result Vector
+        # [Voltage, Energy, Capacity, Power, Efficiency, -Degradation_Penalty]
+        # Temperature omitted due to isothermal mode
+        return np.array([v_final, energy_wh, capacity_ah, power_w, eff, -j_max])
     except Exception as e:
         logging.warning(f"Simulation failed: {e}")
-        return np.array([0.0, 0.0, 0.0, 400.0])
+        return np.array([0.0, 0.0, 0.0, 0.0, 0.0, -1e6])
+
+def get_params_for_theta(theta, materials, design_keys):
+    transform = ParamTransform(get_parameter_values())
+    for i, key in enumerate(design_keys):
+        transform.base[key] = theta[i]
+    for m in materials:
+        deltas = m.to_pybamm_delta()
+        for name, (mode, val) in deltas.items():
+            if mode == "multiplier": transform.add_multiplier(name, val)
+            else: transform.add_additive(name, val)
+    return transform.evaluate()
 
 def compute_sensitivity(theta: np.ndarray, materials: List[MaterialCandidate], design_keys: List[str]) -> np.ndarray:
-    """Computes the parameter Jacobian S_{ij} = dy_i / dtheta_j"""
-    base_params_vals = get_parameter_values()
-
-    def get_params(th):
-        transform = ParamTransform(base_params_vals)
-        for i, key in enumerate(design_keys):
-            transform.base[key] = th[i]
-        for m in materials:
-            deltas = m.to_pybamm_delta()
-            for name, (mode, val) in deltas.items():
-                if mode == "multiplier": transform.add_multiplier(name, val)
-                else: transform.add_additive(name, val)
-        return transform.evaluate()
-
-    y_base = get_y(get_params(theta))
+    """Computes the parameter Jacobian S_{ij} = dy_i / dtheta_j for composite metrics."""
+    y_base = get_y(get_params_for_theta(theta, materials, design_keys))
     n_y = len(y_base)
     n_theta = len(theta)
     S = np.zeros((n_y, n_theta))
@@ -89,20 +101,21 @@ def compute_sensitivity(theta: np.ndarray, materials: List[MaterialCandidate], d
     for j in range(n_theta):
         th_plus = theta.copy()
         th_plus[j] += eps
-        y_plus = get_y(get_params(th_plus))
+        y_plus = get_y(get_params_for_theta(th_plus, materials, design_keys))
         S[:, j] = (y_plus - y_base) / eps
 
     return S
 
 def pybamm_loss(y: np.ndarray) -> float:
-    """Optimization metric weights (Max energy/capacity, Min temperature)."""
-    weights = np.array([-1.0, -10.0, -10.0, 0.1])
+    """Tightened composite objective function."""
+    # Maximize: [Voltage, Energy, Capacity, Power, Efficiency, Stability_Proxy]
+    # y = [v, energy, capacity, power, eff, -j_max]
+    weights = np.array([-1.0, -10.0, -10.0, -2.0, -1.0, -0.001])
     return float(np.dot(y, weights))
 
 def optimize(materials_db: Dict[str, List[MaterialCandidate]]):
     """
-    Main optimization loop.
-    Optimizes cell design parameters and material selection.
+    Refined optimization loop for composite objectives.
     """
     design_keys = [
         "Positive electrode thickness [m]",
@@ -128,20 +141,7 @@ def optimize(materials_db: Dict[str, List[MaterialCandidate]]):
                 curr_theta = theta.copy()
                 for i in range(2):
                     S = compute_sensitivity(curr_theta, selected_materials, design_keys)
-
-                    def get_params_local(th):
-                        transform = ParamTransform(get_parameter_values())
-                        for idx, key in enumerate(design_keys):
-                            transform.base[key] = th[idx]
-                        for m in selected_materials:
-                            deltas = m.to_pybamm_delta()
-                            for name, (mode, val) in deltas.items():
-                                if mode == "multiplier": transform.add_multiplier(name, val)
-                                else: transform.add_additive(name, val)
-                        return transform.evaluate()
-
-                    y = get_y(get_params_local(curr_theta))
-                    weights = np.array([-1.0, -10.0, -10.0, 0.1])
+                    weights = np.array([-1.0, -10.0, -10.0, -2.0, -1.0, -0.001])
                     grad = weights @ S
                     curr_theta -= 0.05 * grad * curr_theta
 
@@ -149,7 +149,7 @@ def optimize(materials_db: Dict[str, List[MaterialCandidate]]):
                     curr_theta[2:4] = np.clip(curr_theta[2:4], 0.2, 0.7)
                     curr_theta[4] = np.clip(curr_theta[4], 500.0, 2000.0)
 
-                final_y = get_y(get_params_local(curr_theta))
+                final_y = get_y(get_params_for_theta(curr_theta, selected_materials, design_keys))
                 loss = pybamm_loss(final_y)
 
                 if loss < best_overall_loss:
