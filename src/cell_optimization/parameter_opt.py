@@ -101,7 +101,8 @@ def stability_obj(theta, materials, keys): return -get_y(theta, materials, keys)
 
 def optimize_objective(theta_init, materials, keys, obj_fn, bounds):
     """Inner loop: Optimize continuous design θ for a single objective function."""
-    res = minimize(obj_fn, theta_init, args=(materials, keys), method='L-BFGS-B', bounds=bounds, options={'maxiter': 5})
+    # maxiter increased to 10 based on code review nitpick for better convergence
+    res = minimize(obj_fn, theta_init, args=(materials, keys), method='L-BFGS-B', bounds=bounds, options={'maxiter': 10})
     return res.x, -res.fun
 
 def compute_envelope(materials, design_keys, theta_init, bounds):
