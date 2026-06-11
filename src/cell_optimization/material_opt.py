@@ -6,7 +6,12 @@ import numpy as np
 import logging
 from typing import List, Dict, Optional, Any
 from dataclasses import dataclass, field
-from src.cell_optimization.chem_regularization import compute_chemical_realization, derive_coupled_deltas
+from src.cell_optimization.chem_regularization import (
+    compute_chemical_realization,
+    derive_coupled_deltas,
+    apply_connectivity_scaling,
+    KT
+)
 
 try:
     import requests
@@ -25,18 +30,19 @@ from nfpp_sodium_ion.src.cell_parameters.cell_alpha import get_parameter_values
 
 # --- CONSTRAINED CHEMICAL SPACE ---
 ALLOWED_SALTS = {"NaBOB": "C4BNaO8", "NaTCP": "C5H3Cl3NNaO"}
-ALLOWED_FUNCTIONALIZATION = {"MTMS": "C4H12O3Si"}
-BASE_CATHODE_FORMULA = "Na4Fe3P4O15"
+ALLOWED_FUNCTIONALIZATION = {"MTMS": ["C4H12O3Si", "CH3Si(OCH3)3"]}
+MTMS_PROXY = "SiO2"
+
+# Cascading Resolve Priorities
+BASE_CATHODE_PRIORITIES = ["Na4Fe3P4O15", "NaFePO4"]
 BASE_SALT_FORMULA = "NaPF6"
+BASE_ANODE_FORMULA = "C"
 DOPANTS = ["Mn", "Cr", "Ni"]
 
 # --- SCIENTIFIC & API CONFIG ---
 OQMD_URL = "https://oqmd.org/oqmdapi/formationenergy"
 CACHE_FILE = "material_cache.json"
-CACHE_VERSION = "v3"
-KT = 0.0259 # eV at 300K
-
-
+CACHE_VERSION = "v13"
 
 REQUIRED_CHANNELS = {"thermodynamic", "kinetic", "transport", "structural"}
 
@@ -65,83 +71,28 @@ class MaterialCandidate:
     def to_pybamm_delta(self) -> Dict[str, Any]:
         """Maps derived deltas to PyBaMM parameter names."""
         mapping = {}
+        td = self.projected_delta.get("thermodynamic", {})
+        kt = self.projected_delta.get("kinetic", {})
+        tr = self.projected_delta.get("transport", {})
+
+        # NOTE: realization is no longer used as a heuristic scaling factor
+        # for PyBaMM deltas because we've moved to a physically grounded
+        # connectivity model for proxies and proper stoichiometry distance
+        # for realization itself.
+
         if self.category == "Cathode_Dopant":
-            mapping["Positive electrode OCP [V]"] = ("additive", self.projected_delta.get("voltage_boost", 0.0))
-            mapping["Positive particle diffusivity [m2.s-1]"] = ("multiplier", self.projected_delta.get("diffusivity_mult", 1.0))
+            mapping["Positive electrode OCP [V]"] = ("additive", td.get("voltage_boost", 0.0))
+            mapping["Positive particle diffusivity [m2.s-1]"] = ("multiplier", math.exp(tr.get("diffusivity_log_delta", 0.0)))
+            mapping["Positive electrode exchange-current density [A.m-2]"] = ("multiplier", math.exp(kt.get("reaction_rate_log_delta", 0.0)))
         elif self.category == "Salt":
-            mapping["Electrolyte conductivity [S.m-1]"] = ("multiplier", self.projected_delta.get("conductivity_mult", 1.0))
-            mapping["Cation transference number"] = ("multiplier", self.projected_delta.get("ion_transference_mult", 1.0))
+            mapping["Electrolyte conductivity [S.m-1]"] = ("multiplier", tr.get("conductivity_mult", 1.0))
+            mapping["Cation transference number"] = ("multiplier", tr.get("ion_transference_mult", 1.0))
         elif self.category == "Functionalization":
-            mapping["SEI reaction exchange current density [A.m-2]"] = ("multiplier", self.projected_delta.get("sei_growth_mult", 1.0))
-            mapping["Initial concentration in negative electrode [mol.m-3]"] = ("multiplier", self.projected_delta.get("initial_loss_mult", 1.0))
-            mapping["SEI resistivity [Ohm.m]"] = ("multiplier", self.projected_delta.get("resistance_drift_mult", 1.0))
+            mapping["SEI reaction exchange current density [A.m-2]"] = ("multiplier", kt.get("sei_growth_mult", 1.0))
+            mapping["Initial concentration in negative electrode [mol.m-3]"] = ("multiplier", td.get("initial_loss_mult", 1.0))
+            mapping["SEI resistivity [Ohm.m]"] = ("multiplier", tr.get("resistance_drift_mult", 1.0))
+            mapping["Negative electrode exchange-current density [A.m-2]"] = ("multiplier", math.exp(kt.get("negative_exchange_log_delta", 0.0)))
         return mapping
-
-class PhysicsModels:
-    """Transformation layer for material properties to performance deltas."""
-
-    @staticmethod
-    def stability_decomposition(props: Dict[str, float]) -> tuple[float, float]:
-        s_thermo = props["stability"]
-        s_kinetic = props["band_gap"] / (props["volume_per_atom"] + 1e-6)
-        return s_thermo, s_kinetic
-
-    @staticmethod
-    def safe_ocp(ocp_func: Any, x: float = 0.5) -> float:
-        try:
-            v = ocp_func(x)
-            return float(getattr(v, "value", v))
-        except Exception:
-            return 3.2 * 0.8
-
-    @staticmethod
-    def cathode_perturbation(proxy_props: Dict[str, float], base_props: Dict[str, float], base_params: Any, base_formula: str, proxy_formula: str, W_coupling: Optional[np.ndarray] = None) -> tuple[Dict[str, Any], float]:
-        """Calculates cathode deltas with semantically correct anchor naming and optional coupling calibration."""
-        realization = compute_chemical_realization(base_formula, proxy_formula, base_props, proxy_props)
-
-        base_ocp = base_params["Positive electrode OCP [V]"]
-        base_v = PhysicsModels.safe_ocp(base_ocp)
-
-        deltas = derive_coupled_deltas(base_props, proxy_props, base_v, realization, W_coupling=W_coupling)
-        return deltas, realization
-
-    @staticmethod
-    def salt_dissociation(props: Dict[str, float], base_props: Dict[str, float]) -> Dict[str, Any]:
-        """Refined salt model returning structured channels."""
-        s_thermo, _ = PhysicsModels.stability_decomposition(props)
-        s_base_thermo, _ = PhysicsModels.stability_decomposition(base_props)
-
-        ef_diff = props["formation_energy"] - base_props["formation_energy"]
-        sigma_mult = math.exp(np.clip(-ef_diff / (2 * KT), -10, 10))
-        sigma_mult = min(max(sigma_mult, 0.1), 10.0)
-
-        delta_s = s_thermo - s_base_thermo
-        dissociation = 1.0 / (1.0 + math.exp(np.clip(25.0 * delta_s, -20, 20)))
-
-        return {
-            "thermodynamic": {"stability_shift": delta_s},
-            "kinetic": {},
-            "transport": {
-                "conductivity_mult": sigma_mult * dissociation,
-                "ion_transference_mult": 1.0 + (0.15 * dissociation)
-            },
-            "structural": {}
-        }
-
-    @staticmethod
-    def anode_interface(props: Dict[str, float]) -> Dict[str, Any]:
-        """Anode functionalization model returning structured channels."""
-        s_thermo, _ = PhysicsModels.stability_decomposition(props)
-        sei_growth = 0.5 + 0.5 * math.exp(np.clip(-s_thermo * 8.0, -20, 20))
-        r_sei = 1.0 + 0.4 * (1.0 - math.exp(np.clip(-s_thermo, -20, 20)))
-        loss = 0.7 + 0.3 * (1.0 - math.exp(np.clip(-s_thermo, -20, 20)))
-
-        return {
-            "thermodynamic": {"initial_loss_mult": loss},
-            "kinetic": {"sei_growth_mult": sei_growth},
-            "transport": {"resistance_drift_mult": r_sei},
-            "structural": {}
-        }
 
 class MaterialMappingEngine:
     def __init__(self):
@@ -167,7 +118,6 @@ class MaterialMappingEngine:
         return {}
 
     def _save_cache(self):
-        # Cache disabled as per PR requirements
         pass
 
     def _valid_props(self, p: Dict[str, Any]) -> bool:
@@ -180,13 +130,35 @@ class MaterialMappingEngine:
             if not np.isfinite(v): return False
         return True
 
-    def _resolve_material(self, formula: str, category_baseline: str) -> tuple[Optional[Dict[str, float]], float, str]:
+    def _resolve_material(self, formula: str, source_override: Optional[str] = None) -> tuple[Optional[Dict[str, float]], float, str]:
         cache_key = f"RESOLVE:{formula}:{CACHE_VERSION}"
         if cache_key in self.cache:
             return self.cache[cache_key]["props"], self.cache[cache_key]["conf"], self.cache[cache_key].get("source", "UNKNOWN")
 
+        props_mp = None
+        if MPRester and self.mp_key and (source_override == "MP" or source_override is None):
+            try:
+                with MPRester(api_key=self.mp_key) as mpr:
+                    docs = mpr.materials.summary.search(
+                        formula=formula,
+                        fields=['material_id', 'formation_energy_per_atom', 'energy_above_hull', 'band_gap', 'volume', 'nsites']
+                    )
+                    if docs:
+                        docs.sort(key=lambda d: d.energy_above_hull)
+                        best = docs[0]
+                        props_mp = {
+                            "stability": float(best.energy_above_hull),
+                            "formation_energy": float(best.formation_energy_per_atom),
+                            "band_gap": float(best.band_gap if best.band_gap is not None else 0.0),
+                            "volume_per_atom": float(best.volume / best.nsites if best.nsites else 15.0),
+                            "natoms": float(best.nsites),
+                            "u": 0.05
+                        }
+            except Exception as e:
+                logging.warning(f"MP query failed for {formula}: {e}")
+
         props_oqmd = None
-        if self.session:
+        if self.session and (source_override == "OQMD" or source_override is None):
             try:
                 params = {"composition": formula, "limit": 10, "fields": "delta_e,stability,band_gap,volume,natoms"}
                 r = self.session.get(OQMD_URL, params=params, timeout=15)
@@ -200,114 +172,103 @@ class MaterialMappingEngine:
                         "formation_energy": float(best.get("delta_e", 0.0)),
                         "band_gap": float(best.get("band_gap", 0.0)),
                         "volume_per_atom": float(best.get("volume", 1.0)) / float(best.get("natoms", 1.0)),
-                        "natoms": float(best.get("natoms", 1.0))
+                        "natoms": float(best.get("natoms", 1.0)),
+                        "u": 0.1
                     }
             except Exception as e:
                 logging.warning(f"OQMD query failed for {formula}: {e}")
 
-        props_mp = None
-        if MPRester and self.mp_key:
-            try:
-                with MPRester(api_key=self.mp_key) as mpr:
-                    docs = mpr.materials.summary.search(formula=formula, fields=['formation_energy_per_atom', 'energy_above_hull', 'band_gap', 'volume', 'nsites'])
-                    if docs:
-                        docs.sort(key=lambda d: d.energy_above_hull)
-                        best = docs[0]
-                        props_mp = {
-                            "stability": best.energy_above_hull,
-                            "formation_energy": best.formation_energy_per_atom,
-                            "band_gap": best.band_gap,
-                            "volume_per_atom": best.volume / best.nsites if best.nsites else 15.0,
-                            "natoms": best.nsites
-                        }
-            except Exception as e:
-                logging.warning(f"MP query failed for {formula}: {e}")
-
-        # Final property resolution and uncertainty modeling
+        # --- Inverse Variance Weighting ---
         props, conf, source = None, 0.0, "NONE"
-        if props_oqmd and props_mp:
-            props = {k: 0.5*(props_oqmd[k] + props_mp[k]) for k in props_oqmd}
-            conf = 0.95
-            props["uncertainty"] = abs(props_oqmd["formation_energy"] - props_mp["formation_energy"])
-            source = "OQMD+MP"
-        elif props_oqmd:
-            props, conf, source = props_oqmd, 1.0, "OQMD"
-            props["uncertainty"] = 0.05
+        if props_mp and props_oqmd:
+            w_m = 1.0 / (props_mp["u"]**2 + 1e-9)
+            w_o = 1.0 / (props_oqmd["u"]**2 + 1e-9)
+            common_keys = {"formation_energy", "band_gap", "stability", "volume_per_atom"}
+            props = {k: (w_m * props_mp[k] + w_o * props_oqmd[k]) / (w_m + w_o) for k in common_keys}
+            props["natoms"] = props_mp["natoms"]
+            props["uncertainty"] = 0.5 * (props_mp["u"] + props_oqmd["u"])
+            conf, source = 0.95, "MP+OQMD"
         elif props_mp:
-            props, conf, source = props_mp, 0.9, "MATERIALS_PROJECT"
-            props["uncertainty"] = 0.1
+            props, conf, source = props_mp, 1.0, "MATERIALS_PROJECT"
+            props["uncertainty"] = props_mp["u"]
+        elif props_oqmd:
+            props, conf, source = props_oqmd, 0.9, "OQMD"
+            props["uncertainty"] = props_oqmd["u"]
 
         if props and self._valid_props(props):
             self.cache[cache_key] = {"props": props, "conf": conf, "source": source}
-            self._save_cache()
 
         return props, conf, source
 
-    def run(self, W_coupling: Optional[np.ndarray] = None):
-        print("Executing Decoupled Materials Mapping & Physics Engine...")
+    def run(self):
+        print(f"Executing Physics-Constrained Materials Mapping (Connectivity Scaling)...")
         system = {"Cathode_Dopant": [], "Salt": [], "Functionalization": []}
-        physics = PhysicsModels()
 
-        base_cathode, _, _ = self._resolve_material(BASE_CATHODE_FORMULA, "Cathode")
-        base_salt, _, _ = self._resolve_material(BASE_SALT_FORMULA, "Salt")
+        # --- Base Cathode Resolution ---
+        base_cathode = None
+        base_cathode_formula = None
+        for f in BASE_CATHODE_PRIORITIES:
+            base_cathode, _, _ = self._resolve_material(f, source_override="MP")
+            if base_cathode:
+                base_cathode_formula = f
+                break
 
-        if not base_cathode:
-            base_cathode = {"stability": 0.05, "formation_energy": -2.1, "band_gap": 2.5, "volume_per_atom": 15.5, "natoms": 26}
-        if not base_salt:
-            base_salt = {"stability": 0.01, "formation_energy": -1.8, "band_gap": 5.0, "volume_per_atom": 25.0, "natoms": 7}
+        base_salt, _, _ = self._resolve_material(BASE_SALT_FORMULA)
+        base_anode, _, _ = self._resolve_material(BASE_ANODE_FORMULA)
 
-        # Exact doped variants for direct composition optimization
-        dopant_proxies = {
-            "Mn": "Na4Fe2.7Mn0.3P4O15",
-            "Cr": "Na4Fe2.7Cr0.3P4O15",
-            "Ni": "Na4Fe2.7Ni0.3P4O15"
-        }
-        for d, proxy_formula in dopant_proxies.items():
-            proxy_props, conf, src = self._resolve_material(proxy_formula, "Cathode")
-            if not proxy_props:
-                fallback_formula = f"Na{d}PO4"
-                proxy_props, conf, src = self._resolve_material(fallback_formula, "Cathode")
+        if not all([base_cathode, base_salt, base_anode]):
+            logging.error("Failed to resolve base material properties from API. Aborting mapping.")
+            return system
 
+        # --- Dopants ---
+        for d in DOPANTS:
+            proxy_formula = f"Na{d}PO4"
+            proxy_props, conf, src = self._resolve_material(proxy_formula, source_override="MP")
             if not proxy_props: continue
 
-            deltas, realization = physics.cathode_perturbation(proxy_props, base_cathode, self.base_params, BASE_CATHODE_FORMULA, proxy_formula, W_coupling=W_coupling)
-
-            # Uncertainty-aware Weighted Correction (Inverse-variance weighting)
-            # corrected = (w*proxy + w0*base) / (w + w0)
-            u_proxy = proxy_props.get("uncertainty", 0.1)
-            u_base = base_cathode.get("uncertainty", 0.05)
-
-            # True inverse variance weighting (w = 1 / uncertainty**2)
-            w_p = 1.0 / (u_proxy**2 + 1e-6)
-            w_b = 1.0 / (u_base**2 + 1e-6)
-
-            common_keys = set(proxy_props.keys()) & set(base_cathode.keys())
-            corrected_props = {
-                k: (w_p * proxy_props[k] + w_b * base_cathode[k]) / (w_p + w_b)
-                for k in common_keys
-                if np.isfinite(proxy_props[k]) and np.isfinite(base_cathode[k])
-            }
-
+            realization = compute_chemical_realization(base_cathode_formula, proxy_formula, base_cathode, proxy_props)
+            deltas = derive_coupled_deltas(base_cathode, proxy_props)
             system["Cathode_Dopant"].append(MaterialCandidate(
                 name=d, category="Cathode_Dopant", composition=proxy_formula,
-                properties=corrected_props, projected_delta=deltas, confidence=conf,
-                realization=realization, uncertainty=u_proxy, provenance=src))
+                properties=proxy_props, projected_delta=deltas, confidence=conf,
+                realization=realization, uncertainty=proxy_props.get("uncertainty", 0.1), provenance=src))
 
+        # --- Salts ---
         for name, formula in ALLOWED_SALTS.items():
-            props, conf, src = self._resolve_material(formula, "Salt")
+            props, conf, src = self._resolve_material(formula)
             if not props: continue
-            deltas = physics.salt_dissociation(props, base_salt)
+            deltas = derive_coupled_deltas(base_salt, props)
             system["Salt"].append(MaterialCandidate(
                 name=name, category="Salt", composition=formula, properties=props,
                 projected_delta=deltas, confidence=conf, realization=1.0, uncertainty=props.get("uncertainty", 0.05), provenance=src))
 
-        for name, formula in ALLOWED_FUNCTIONALIZATION.items():
-            props, conf, src = self._resolve_material(formula, "Anode")
-            if not props: continue
-            deltas = physics.anode_interface(props)
+        # --- Functionalization (MTMS) ---
+        for name, formulas in ALLOWED_FUNCTIONALIZATION.items():
+            resolved_props = None
+            resolved_formula = None
+            source_was_proxy = False
+            for formula in formulas:
+                resolved_props, conf, src = self._resolve_material(formula)
+                if resolved_props:
+                    resolved_formula = formula
+                    break
+
+            if not resolved_props:
+                # Fallback to SiO2 proxy (NETWORK_SOLID)
+                resolved_props, conf, src = self._resolve_material(MTMS_PROXY)
+                if resolved_props:
+                    # Apply connectivity scaling to transform SiO2 -> MTMS properties
+                    resolved_props = apply_connectivity_scaling(resolved_props, phi=0.75)
+                    resolved_formula = MTMS_PROXY
+                    source_was_proxy = True
+
+            if not resolved_props: continue
+
+            realization = compute_chemical_realization(BASE_ANODE_FORMULA, resolved_formula, base_anode, resolved_props)
+            deltas = derive_coupled_deltas(base_anode, resolved_props, is_network=source_was_proxy)
             system["Functionalization"].append(MaterialCandidate(
-                name=name, category="Functionalization", composition=formula, properties=props,
-                projected_delta=deltas, confidence=conf, realization=1.0, uncertainty=0.01, provenance=src))
+                name=name, category="Functionalization", composition=resolved_formula, properties=resolved_props,
+                projected_delta=deltas, confidence=conf, realization=realization, uncertainty=0.01, provenance=src))
 
         return system
 
@@ -317,4 +278,4 @@ if __name__ == "__main__":
     for cat, cands in res.items():
         print(f"\nCategory: {cat}")
         for c in cands:
-            print(f"  - {c.name} (Conf: {c.confidence:.1f}, Source: {c.provenance}): {c.projected_delta}")
+            print(f"  - {c.name} (Conf: {c.confidence:.1f}, Realiz: {c.realization:.2f}, Source: {c.provenance}): {c.composition}")
