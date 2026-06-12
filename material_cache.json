@@ -1,0 +1,68 @@
+{
+  "RESOLVE:Na4Fe3(PO4)2P2O7:v16": {
+    "props": {
+      "stability": 0.19565050637820391,
+      "formation_energy": -2.260659387272641,
+      "band_gap": 0.09770000000000012,
+      "volume_per_atom": 12.669387782700072,
+      "natoms": 104.0,
+      "u": 0.05
+    },
+    "source": "MATERIALS_PROJECT"
+  },
+  "RESOLVE:NaPF6:v16": {
+    "props": {
+      "formation_energy": -3.035627189771382,
+      "band_gap": 7.2012800422831935,
+      "volume_per_atom": 14.001926029999971,
+      "stability": 0.0,
+      "natoms": 8.0,
+      "u": 0.07500000000000001
+    },
+    "source": "MP+OQMD"
+  },
+  "RESOLVE:C2H4O:v16": {
+    "props": {
+      "stability": 0.18902546124999997,
+      "formation_energy": -0.44953409089285606,
+      "band_gap": 5.4072,
+      "volume_per_atom": 9.536051923842608,
+      "natoms": 56.0,
+      "u": 0.05
+    },
+    "source": "MATERIALS_PROJECT"
+  },
+  "RESOLVE:NaMnPO4:v16": {
+    "props": {
+      "stability": 0.0,
+      "formation_energy": -2.572038827350458,
+      "band_gap": 2.2504,
+      "volume_per_atom": 12.339727214082837,
+      "natoms": 28.0,
+      "u": 0.05
+    },
+    "source": "MATERIALS_PROJECT"
+  },
+  "RESOLVE:NaNiPO4:v16": {
+    "props": {
+      "stability": 0.0,
+      "formation_energy": -2.305945144074595,
+      "band_gap": 3.5944000000000003,
+      "volume_per_atom": 12.30956291502716,
+      "natoms": 28.0,
+      "u": 0.05
+    },
+    "source": "MATERIALS_PROJECT"
+  },
+  "RESOLVE:SiO2:v16": {
+    "props": {
+      "formation_energy": -3.232822075292726,
+      "band_gap": 5.661599996064001,
+      "volume_per_atom": 13.469740288837517,
+      "stability": 0.0001541797036690464,
+      "natoms": 9.0,
+      "u": 0.07500000000000001
+    },
+    "source": "MP+OQMD"
+  }
+}

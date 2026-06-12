@@ -42,10 +42,17 @@ class ParamTransform:
     def apply_physics(self, reg_data: Dict[str, Any], category: str):
         """
         DSMO transformation: Performs all delta derivation and mappings.
-        Takes attenuated residuals and applies physics coupling rules.
         """
         res = reg_data["residuals"]
-        dE, dG, dV, dS = res["dE"], res["dG"], res["dV"], res["dS"]
+
+        if category == "Salt":
+            # Solution-phase mapping
+            self.add_multiplier("Electrolyte conductivity [S.m-1]", 1.0 + res["d_cond"])
+            self.add_multiplier("Cation transference number", 1.0 + res["d_trans"])
+            # Viscosity effect (inverse on conductivity if not already in d_cond)
+            return
+
+        dE, dG, dV, dS = res.get("dE", 0.0), res.get("dG", 0.0), res.get("dV", 0.0), res.get("dS", 0.0)
         is_network = reg_data.get("is_network", False)
 
         # 1. Physics Coupling Rules (Delta Derivation)
@@ -70,9 +77,6 @@ class ParamTransform:
             self.add_additive("Positive electrode OCP [V]", voltage_boost)
             self.add_multiplier("Positive particle diffusivity [m2.s-1]", math.exp(clip_log(diffusivity_log_delta)))
             self.add_multiplier("Positive electrode exchange-current density [A.m-2]", math.exp(clip_log(reaction_rate_log_delta)))
-        elif category == "Salt":
-            self.add_multiplier("Electrolyte conductivity [S.m-1]", math.exp(clip_log(transport_log_delta)))
-            self.add_multiplier("Cation transference number", 1.0 + 0.1 * float(np.tanh(transport_log_delta)))
         elif category in ["Functionalization", "Functionalization_Proxy"]:
             self.add_multiplier("SEI reaction exchange current density [A.m-2]", sei_growth_mult)
             self.add_multiplier("Initial concentration in negative electrode [mol.m-3]", initial_loss_mult)

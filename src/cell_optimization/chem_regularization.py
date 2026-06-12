@@ -55,7 +55,7 @@ def compute_chemical_realization(
     """How safely can this proxy perturb the base material?"""
     def safe(x, ref=0.0):
         try: return float(x)
-        except: return ref
+        except (TypeError, ValueError): return ref
 
     base_s = stoich_norm(parse_stoich(base_formula))
     proxy_s = stoich_norm(parse_stoich(proxy_formula))
@@ -77,29 +77,39 @@ def get_regularized_residuals(
     proxy_props: Dict[str, float],
     realization: float = 1.0
 ) -> Dict[str, float]:
-    """
-    Core Regularization: Computes attenuated physical residuals.
-    All physics-to-performance mapping (delta derivation) happens in parameter_opt.py.
-    """
+    """Core Regularization: Computes attenuated physical residuals."""
     r = float(realization)
-
     dE = thermo_norm(proxy_props["formation_energy"], base_props["formation_energy"]) * r
     dG = ((proxy_props["band_gap"] - base_props["band_gap"]) / 1.0) * r
     dV = geom_norm(proxy_props, base_props)["strain"] * r
     dS = ((base_props["stability"] - proxy_props["stability"]) / 0.2) * r
 
-    return {
-        "dE": float(dE),
-        "dG": float(dG),
-        "dV": float(dV),
-        "dS": float(dS)
-    }
+    return {"dE": float(dE), "dG": float(dG), "dV": float(dV), "dS": float(dS)}
 
 def regularize_material(candidate_obj: Any, base_dict: Dict[str, Any]) -> Dict[str, Any]:
     """
     Consolidated Regularization Entry Point.
-    Returns attenuated physical residuals and realization metadata.
+    Handles crystal (dopant, functionalization) and solution (salt) descriptors.
     """
+    if candidate_obj.category == "Salt":
+        # Solution-phase scaling
+        props = candidate_obj.properties
+        base_props = base_dict["solution"]
+
+        # Scalar residuals for solution properties
+        residuals = {
+            "d_cond": (props["conductivity"] - base_props["conductivity"]) / base_props["conductivity"],
+            "d_trans": (props["transference_number"] - base_props["transference_number"]) / base_props["transference_number"],
+            "d_visc": (props["viscosity"] - base_props["viscosity"]) / base_props["viscosity"]
+        }
+        return {
+            "residuals": residuals,
+            "realization": 1.0, # Salts in DB are 100% physically relevant
+            "proxy_uncertainty": 0.0,
+            "is_network": False
+        }
+
+    # Crystal-phase scaling (Dopants, Functionalization)
     props = candidate_obj.properties
     base_props = base_dict["properties"]
     base_formula = base_dict["formula"]
