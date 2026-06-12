@@ -39,25 +39,16 @@ def geom_norm(props, base_props):
 
 def apply_connectivity_scaling(props: Dict[str, float], phi: float = 0.75) -> Dict[str, float]:
     """
-    Physically grounded connectivity-based scaling for organosiloxanes (MTMS)
-    derived from network solids (SiO2).
-    P_mtms = phi^alpha * P_sio2
+    Physically grounded connectivity-based scaling for organosiloxanes (MTMS).
     """
     scaled = props.copy()
-    # Connectivity exponents
     a_density = 1.0
-    a_transport = 1.5
-
-    # Scaling properties
     if "volume_per_atom" in scaled:
         scaled["volume_per_atom"] = scaled["volume_per_atom"] / (phi**a_density)
-
     if "formation_energy" in scaled:
         scaled["formation_energy"] = scaled["formation_energy"] * phi
-
     if "stability" in scaled:
         scaled["stability"] = scaled["stability"] / (phi + 1e-9)
-
     return scaled
 
 def compute_chemical_realization(
@@ -68,61 +59,48 @@ def compute_chemical_realization(
 ) -> float:
     """
     How safely can this proxy perturb the base material?
-    Uses stoichiometry, chemical overlap, and physics residuals.
     """
     def safe(x, ref=0.0):
         try: return float(x)
         except: return ref
 
-    # --- Stoichiometry and chemical overlap ---
     base_s = stoich_norm(parse_stoich(base_formula))
     proxy_s = stoich_norm(parse_stoich(proxy_formula))
-
     stoich_penalty = stoich_distance(base_s, proxy_s)
 
     e_base = set(base_s.keys())
     e_proxy = set(proxy_s.keys())
     r_chem = len(e_base & e_proxy) / max(len(e_base | e_proxy), 1)
 
-    # --- Physical residuals ---
     dE = thermo_norm(safe(proxy_props.get("formation_energy")), safe(base_props.get("formation_energy")))
     dV = (safe(proxy_props.get("volume_per_atom")) - safe(base_props.get("volume_per_atom"))) / (safe(base_props.get("volume_per_atom")) + 1e-9)
 
-    # Realization equation: higher is better
-    z = (
-        3.0 * r_chem
-        - 1.5 * abs(dE)
-        - 1.0 * abs(dV)
-        - 2.0 * stoich_penalty
-    )
-
+    z = (3.0 * r_chem - 1.5 * abs(dE) - 1.0 * abs(dV) - 2.0 * stoich_penalty)
     z = np.clip(z, -10, 10)
     return float(1.0 / (1.0 + np.exp(-z)))
 
 def derive_coupled_deltas(
     base_props: Dict[str, float],
     proxy_props: Dict[str, float],
+    realization: float = 1.0,
     is_network: bool = False
 ) -> Dict[str, Dict[str, float]]:
     """
-    Universal physics transformation layer.
-    Converts raw material property differences into physical performance deltas.
+    Universal physics transformation layer with realization-based attenuation.
     """
-    dE = thermo_norm(proxy_props["formation_energy"], base_props["formation_energy"])
-    dG = (proxy_props["band_gap"] - base_props["band_gap"]) / 1.0
-    dV = geom_norm(proxy_props, base_props)["strain"]
-    dS = (base_props["stability"] - proxy_props["stability"]) / 0.2
+    # Attenuate physical residuals by realization
+    r = float(realization)
+    dE = thermo_norm(proxy_props["formation_energy"], base_props["formation_energy"]) * r
+    dG = ((proxy_props["band_gap"] - base_props["band_gap"]) / 1.0) * r
+    dV = geom_norm(proxy_props, base_props)["strain"] * r
+    dS = ((base_props["stability"] - proxy_props["stability"]) / 0.2) * r
 
     # Physics coupling rules
     voltage_boost = -0.01 * dE
     stability_shift = dS
     initial_loss_mult = math.exp(np.clip(0.2 * dS, -5, 5))
 
-    # Kinetic (Arrhenius-derived)
     activation_delta = 0.2 * dV + 0.1 * dG
-
-    # Network-specific attenuation for diffusivity if applicable
-    # This reflects the lower connectivity reducing hopping pathways in network solids
     network_attenuation = 0.5 if is_network else 1.0
     diffusivity_log_delta = -activation_delta * network_attenuation / (KT + 1e-9)
 
@@ -130,7 +108,6 @@ def derive_coupled_deltas(
     sei_growth_mult = math.exp(np.clip(0.5 * dE - 0.2 * dS, -5, 5))
     negative_exchange_log_delta = 0.4 * dS - 0.1 * dG
 
-    # Transport/Secondary
     transport_log_delta = -0.5 * dE + 0.2 * dV
     interfacial_log_delta = -0.8 * dS + 0.3 * dG
 

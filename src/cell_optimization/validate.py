@@ -2,94 +2,88 @@ import pybamm
 import numpy as np
 import scipy.io as sio
 import os
-from src.simulation.utilities.parameters.parameter_builder import get_parameter_values
-from src.simulation.utilities.electrochemical.pybamm_driver import ElectrochemicalThermalDriverModel
-from src.simulation.utilities.thermal.pybamm_thermal import ThermalFieldModel
-from src.simulation.utilities.mechanical.fenics_model import ThermoelasticStrainModel
+import math
+from typing import Dict, Any, List
+from nfpp_sodium_ion.src.cell_parameters.cell_alpha import get_parameter_values
+from src.cell_optimization.material_opt import MaterialMappingEngine, MaterialCandidate
 
 class OptimizationValidator:
     """
-    Optimization Validator.
-    Computes final cell-level performance metrics using full multiphysics Digital Twin.
+    Independent Multi-physics Validator.
+    Applies optimized design parameters and material deltas (including MTMS).
     """
 
-    def __init__(self, optimized_params=None):
-        self.params_updates = optimized_params or {}
-        self.electro_model = ElectrochemicalThermalDriverModel()
-        self.thermal_model = ThermalFieldModel()
-        self.mech_model = ThermoelasticStrainModel()
+    def __init__(self, optimized_design: Dict[str, float], selected_materials: List[MaterialCandidate]):
+        self.design = optimized_design
+        self.materials = selected_materials
 
-    def run_discharge_experiment(self, c_rate=1.0):
-        """Runs a discharge experiment to extract performance metrics."""
-        model_dict = self.electro_model.build_model(parameter_updates=self.params_updates)
-        cap_ah = model_dict["parameter_values"]["Nominal cell capacity [A.h]"]
-        current = c_rate * cap_ah
+    def get_final_parameters(self) -> pybamm.ParameterValues:
+        base_params = get_parameter_values()
+        params = pybamm.ParameterValues(base_params)
 
-        # Simulation times
-        times = np.linspace(0, 3600 / c_rate, 100)
-        results = self.electro_model.simulate(model_dict, times, current_function=current)
-        return results, model_dict["parameter_values"]
+        # 1. Apply design parameters
+        for k, v in self.design.items():
+            if k in params:
+                params[k] = v
 
-    def compute_cell_attributes(self):
-        print("Computing final cell-level performance metrics...")
+        # 2. Handle conductive carbon percolation
+        if "Positive electrode conductive carbon fraction" in self.design:
+            phi = self.design["Positive electrode conductive carbon fraction"]
+            phi_c = 0.03
+            cond_mult = max(((phi - phi_c) / (1 - phi_c + 1e-9)), 0.01)**1.8
+            params["Positive electrode conductivity [S.m-1]"] *= (cond_mult / (0.08 / (1-phi_c))**1.8)
 
-        # 1. Nominal Performance (1C Discharge)
-        res_1c, params = self.run_discharge_experiment(c_rate=1.0)
+        # 3. Apply material deltas (Dopants, Salts, Functionalization)
+        for m in self.materials:
+            deltas = m.to_pybamm_delta()
+            for name, (mode, val) in deltas.items():
+                if name in params:
+                    if mode == "multiplier": params[name] *= val
+                    else: params[name] += val
 
-        v_terminal = res_1c["terminal_voltage"]
-        t_final = res_1c["times"][-1]
-        capacity_ah = float(res_1c["solution"]["Discharge capacity [A.h]"].entries[-1])
+        # Mandatory geometrical consistency
+        if "Cell volume [m3]" not in params:
+            params["Cell volume [m3]"] = 0.130 * 0.070 * 0.0003
 
-        # Use scipy.integrate.trapezoid as np.trapz is deprecated/removed in NumPy 2.0
-        from scipy.integrate import trapezoid
-        energy_kwh = float(trapezoid(v_terminal, res_1c["solution"]["Discharge capacity [A.h]"].entries) / 1000.0)
-        v_nom = float(np.mean(v_terminal))
+        return params
 
-        # 2. Power Capability (Peak Current - 3C burst)
-        # We estimate power at 50% SOC
-        soc_idx = np.argmin(np.abs(res_1c["soc_trajectory"] - 0.5))
-        v_50 = v_terminal[soc_idx]
-        peak_current = 3.0 * params["Nominal cell capacity [A.h]"]
-        power_kw = (v_50 * peak_current) / 1000.0
+    def run_validation(self):
+        print("Running final Digital Twin validation...")
+        params = self.get_final_parameters()
 
-        # 3. Thermal Response (under peak 3C)
-        res_3c, _ = self.run_discharge_experiment(c_rate=3.0)
-        max_temp = float(np.max(res_3c["temperature"]))
+        # Use DFN for high-fidelity validation
+        model = pybamm.lithium_ion.DFN({"thermal": "lumped"})
+        solver = pybamm.CasadiSolver(mode="safe")
+        sim = pybamm.Simulation(model, parameter_values=params, solver=solver)
 
-        # 4. Mechanical Integrity
-        mech_res = self.mech_model.solve_strain(
-            pybamm_solution=res_1c["solution"],
-            params=params
-        )
-        max_strain = mech_res["max_strain"]
+        try:
+            # Full 1C discharge
+            sol = sim.solve([0, 3600], inputs={"Current [A]": params["Nominal cell capacity [A.h]"]})
 
-        # 5. Cycle Life (Fatigue + Degradation)
-        # Combined SOH fade and strain-life
-        endurance = self.mech_model.compute_endurance_metric(max_strain)
+            v = sol["Terminal voltage [V]"].entries
+            cap = sol["Discharge capacity [A.h]"].entries[-1]
+            temp = sol["Cell temperature [K]"].entries
 
-        # Approximate cycle life from LAM fade rate
-        lam_fade = res_1c["soh_trajectory"][-1] - res_1c["soh_trajectory"][0]
-        # Avoid division by zero
-        n_soh = int(20.0 / (lam_fade + 1e-12)) # 20% fade limit
-        cycle_life = min(n_soh, endurance["n_crit"], 10000)
+            # Integration
+            trapezoid = getattr(np, "trapezoid", getattr(np, "trapz", None))
+            energy = trapezoid(v, sol["Discharge capacity [A.h]"].entries)
 
-        attributes = {
-            "Energy_capacity_kWh": energy_kwh,
-            "Nominal_voltage_V": v_nom,
-            "Continuous_current_A": float(params["Nominal cell capacity [A.h]"]),
-            "Peak_current_A": float(peak_current),
-            "Charge_time_min": 60.0, # Target 1C charging
-            "Power_capability_kW": float(power_kw),
-            "Cycle_life": int(cycle_life),
-            "Max_operating_temp_K": max_temp,
-            "Max_structural_strain": float(max_strain)
-        }
+            attributes = {
+                "Energy_Wh": float(energy),
+                "Capacity_Ah": float(cap),
+                "Nominal_Voltage_V": float(np.mean(v)),
+                "Max_Temp_K": float(np.max(temp)),
+                "Energy_Density_Wh_kg": float(energy / 0.5) # Crude mass estimate
+            }
 
-        print("Final Cell Attributes:")
-        for k, v in attributes.items():
-            print(f"  {k}: {v}")
+            print("Final Cell Attributes (Validated):")
+            for k, v in attributes.items():
+                print(f"  {k}: {v}")
 
-        return attributes
+            return attributes
+        except Exception as e:
+            print(f"Validation failed: {e}")
+            return None
 
     def export_results(self, attributes, output_path="src/bms_design/cell_attributes.mat"):
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -97,15 +91,34 @@ class OptimizationValidator:
         print(f"Cell attributes exported to {output_path}")
 
 if __name__ == "__main__":
-    # Example optimized parameters from previous stages
+    # Example usage: simulate the flow from optimizer result
+    engine = MaterialMappingEngine()
+    materials_db = engine.run()
+
+    # Simulate a result from parameter_opt.py
+    # Choosing Mn, NaBOB and MTMS
+    selected = [
+        [m for m in materials_db["Cathode_Dopant"] if m.name == "Mn"][0],
+        [m for m in materials_db["Salt"] if m.name == "NaBOB"][0],
+        materials_db["Functionalization"][0] # MTMS
+    ]
+
     optimized_design = {
-        "Positive electrode thickness [m]": 1.2e-4,
-        "Negative electrode thickness [m]": 1.2e-4,
-        "Positive electrode porosity": 0.25,
-        "Negative electrode porosity": 0.25,
-        "Positive particle radius [m]": 1e-6
+        "Positive electrode thickness [m]": 0.00015,
+        "Negative electrode thickness [m]": 0.00015,
+        "Positive electrode porosity": 0.3,
+        "Negative electrode porosity": 0.3,
+        "Separator porosity": 0.5,
+        "Positive electrode Bruggeman coefficient (electrolyte)": 1.5,
+        "Negative electrode Bruggeman coefficient (electrolyte)": 1.5,
+        "Positive electrode active material volume fraction": 0.65,
+        "Positive particle radius [m]": 1e-6,
+        "Negative particle radius [m]": 5e-6,
+        "Typical electrolyte concentration [mol.m-3]": 1000.0,
+        "Positive electrode conductive carbon fraction": 0.08
     }
 
-    validator = OptimizationValidator(optimized_design)
-    attributes = validator.compute_cell_attributes()
-    validator.export_results(attributes)
+    validator = OptimizationValidator(optimized_design, selected)
+    res = validator.run_validation()
+    if res:
+        validator.export_results(res)

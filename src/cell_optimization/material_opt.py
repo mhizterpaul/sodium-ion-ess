@@ -36,13 +36,13 @@ MTMS_PROXY = "SiO2"
 # Cascading Resolve Priorities
 BASE_CATHODE_PRIORITIES = ["Na4Fe3P4O15", "NaFePO4"]
 BASE_SALT_FORMULA = "NaPF6"
-BASE_ANODE_FORMULA = "C"
+BASE_INTERFACE_FORMULA = "C2H4O" # Meaningful baseline for SEI/MTMS modification
 DOPANTS = ["Mn", "Cr", "Ni"]
 
 # --- SCIENTIFIC & API CONFIG ---
 OQMD_URL = "https://oqmd.org/oqmdapi/formationenergy"
 CACHE_FILE = "material_cache.json"
-CACHE_VERSION = "v13"
+CACHE_VERSION = "v14"
 
 REQUIRED_CHANNELS = {"thermodynamic", "kinetic", "transport", "structural"}
 
@@ -55,7 +55,8 @@ class MaterialCandidate:
     projected_delta: Dict[str, Any] = field(default_factory=dict)
     confidence: float = 1.0
     realization: float = 1.0
-    uncertainty: float = 0.0
+    database_uncertainty: float = 0.0
+    proxy_uncertainty: float = 0.0
     provenance: str = "OQMD"
 
     def __post_init__(self):
@@ -74,11 +75,6 @@ class MaterialCandidate:
         td = self.projected_delta.get("thermodynamic", {})
         kt = self.projected_delta.get("kinetic", {})
         tr = self.projected_delta.get("transport", {})
-
-        # NOTE: realization is no longer used as a heuristic scaling factor
-        # for PyBaMM deltas because we've moved to a physically grounded
-        # connectivity model for proxies and proper stoichiometry distance
-        # for realization itself.
 
         if self.category == "Cathode_Dopant":
             mapping["Positive electrode OCP [V]"] = ("additive", td.get("voltage_boost", 0.0))
@@ -178,7 +174,6 @@ class MaterialMappingEngine:
             except Exception as e:
                 logging.warning(f"OQMD query failed for {formula}: {e}")
 
-        # --- Inverse Variance Weighting ---
         props, conf, source = None, 0.0, "NONE"
         if props_mp and props_oqmd:
             w_m = 1.0 / (props_mp["u"]**2 + 1e-9)
@@ -186,14 +181,12 @@ class MaterialMappingEngine:
             common_keys = {"formation_energy", "band_gap", "stability", "volume_per_atom"}
             props = {k: (w_m * props_mp[k] + w_o * props_oqmd[k]) / (w_m + w_o) for k in common_keys}
             props["natoms"] = props_mp["natoms"]
-            props["uncertainty"] = 0.5 * (props_mp["u"] + props_oqmd["u"])
+            props["u"] = 0.5 * (props_mp["u"] + props_oqmd["u"])
             conf, source = 0.95, "MP+OQMD"
         elif props_mp:
             props, conf, source = props_mp, 1.0, "MATERIALS_PROJECT"
-            props["uncertainty"] = props_mp["u"]
         elif props_oqmd:
             props, conf, source = props_oqmd, 0.9, "OQMD"
-            props["uncertainty"] = props_oqmd["u"]
 
         if props and self._valid_props(props):
             self.cache[cache_key] = {"props": props, "conf": conf, "source": source}
@@ -201,7 +194,7 @@ class MaterialMappingEngine:
         return props, conf, source
 
     def run(self):
-        print(f"Executing Physics-Constrained Materials Mapping (Connectivity Scaling)...")
+        print(f"Executing Physics-Constrained Materials Mapping (Uncertainty-Aware)...")
         system = {"Cathode_Dopant": [], "Salt": [], "Functionalization": []}
 
         # --- Base Cathode Resolution ---
@@ -214,10 +207,10 @@ class MaterialMappingEngine:
                 break
 
         base_salt, _, _ = self._resolve_material(BASE_SALT_FORMULA)
-        base_anode, _, _ = self._resolve_material(BASE_ANODE_FORMULA)
+        base_interface, _, _ = self._resolve_material(BASE_INTERFACE_FORMULA)
 
-        if not all([base_cathode, base_salt, base_anode]):
-            logging.error("Failed to resolve base material properties from API. Aborting mapping.")
+        if not all([base_cathode, base_salt, base_interface]):
+            logging.error("Failed to resolve required base material properties. Aborting mapping.")
             return system
 
         # --- Dopants ---
@@ -227,20 +220,24 @@ class MaterialMappingEngine:
             if not proxy_props: continue
 
             realization = compute_chemical_realization(base_cathode_formula, proxy_formula, base_cathode, proxy_props)
-            deltas = derive_coupled_deltas(base_cathode, proxy_props)
+            deltas = derive_coupled_deltas(base_cathode, proxy_props, realization=realization)
             system["Cathode_Dopant"].append(MaterialCandidate(
                 name=d, category="Cathode_Dopant", composition=proxy_formula,
                 properties=proxy_props, projected_delta=deltas, confidence=conf,
-                realization=realization, uncertainty=proxy_props.get("uncertainty", 0.1), provenance=src))
+                realization=realization, database_uncertainty=proxy_props.get("u", 0.1),
+                proxy_uncertainty=(1-realization)**2, provenance=src))
 
         # --- Salts ---
         for name, formula in ALLOWED_SALTS.items():
             props, conf, src = self._resolve_material(formula)
             if not props: continue
-            deltas = derive_coupled_deltas(base_salt, props)
+
+            realization = compute_chemical_realization(BASE_SALT_FORMULA, formula, base_salt, props)
+            deltas = derive_coupled_deltas(base_salt, props, realization=realization)
             system["Salt"].append(MaterialCandidate(
                 name=name, category="Salt", composition=formula, properties=props,
-                projected_delta=deltas, confidence=conf, realization=1.0, uncertainty=props.get("uncertainty", 0.05), provenance=src))
+                projected_delta=deltas, confidence=conf, realization=realization,
+                database_uncertainty=props.get("u", 0.05), proxy_uncertainty=(1-realization)**2, provenance=src))
 
         # --- Functionalization (MTMS) ---
         for name, formulas in ALLOWED_FUNCTIONALIZATION.items():
@@ -254,21 +251,20 @@ class MaterialMappingEngine:
                     break
 
             if not resolved_props:
-                # Fallback to SiO2 proxy (NETWORK_SOLID)
                 resolved_props, conf, src = self._resolve_material(MTMS_PROXY)
                 if resolved_props:
-                    # Apply connectivity scaling to transform SiO2 -> MTMS properties
                     resolved_props = apply_connectivity_scaling(resolved_props, phi=0.75)
                     resolved_formula = MTMS_PROXY
                     source_was_proxy = True
 
             if not resolved_props: continue
 
-            realization = compute_chemical_realization(BASE_ANODE_FORMULA, resolved_formula, base_anode, resolved_props)
-            deltas = derive_coupled_deltas(base_anode, resolved_props, is_network=source_was_proxy)
+            realization = compute_chemical_realization(BASE_INTERFACE_FORMULA, resolved_formula, base_interface, resolved_props)
+            deltas = derive_coupled_deltas(base_interface, resolved_props, realization=realization, is_network=source_was_proxy)
             system["Functionalization"].append(MaterialCandidate(
                 name=name, category="Functionalization", composition=resolved_formula, properties=resolved_props,
-                projected_delta=deltas, confidence=conf, realization=realization, uncertainty=0.01, provenance=src))
+                projected_delta=deltas, confidence=conf, realization=realization,
+                database_uncertainty=0.01, proxy_uncertainty=(1-realization)**2, provenance=src))
 
         return system
 
@@ -278,4 +274,4 @@ if __name__ == "__main__":
     for cat, cands in res.items():
         print(f"\nCategory: {cat}")
         for c in cands:
-            print(f"  - {c.name} (Conf: {c.confidence:.1f}, Realiz: {c.realization:.2f}, Source: {c.provenance}): {c.composition}")
+            print(f"  - {c.name} (R: {c.realization:.2f}, Proxy-U: {c.proxy_uncertainty:.2e}): {c.composition}")
