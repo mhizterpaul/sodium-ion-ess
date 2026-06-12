@@ -8,7 +8,7 @@ from typing import Dict, Any, List, Tuple
 from nfpp_sodium_ion.src.cell_parameters.cell_alpha import get_parameter_values
 from src.cell_optimization.material_opt import MaterialMappingEngine, MaterialCategory, MaterialCandidate
 from src.cell_optimization.chem_regularization import derive_coupled_deltas, regularize_salt_props, regularize_functionalization
-from src.cell_optimization.parameter_opts import ParamTransform, OptimizerEngine
+from src.cell_optimization.parameter_opts import ParamTransform, ParetoOptimizer, DESIGN_SPACE
 
 try:
     import dolfinx
@@ -31,23 +31,12 @@ class OptimizationValidator:
     def get_final_parameters(self) -> pybamm.ParameterValues:
         base_params = get_parameter_values()
         pt = ParamTransform(pybamm.ParameterValues(base_params))
-
-        # Apply physics
         pt.apply_physics_deltas(self.deltas)
-
-        # Apply design vector
-        from src.cell_optimization.parameter_opts import DESIGN_SPACE
         pt.apply_design_vector(
             np.array([self.design[k] for k in DESIGN_SPACE if k in self.design]),
             [k for k in DESIGN_SPACE if k in self.design]
         )
-
         p = pt.get_parameter_values()
-        # Ensure thermal parameters are set
-        if "Cell volume [m3]" not in p:
-            p["Cell volume [m3]"] = 0.13 * 0.07 * 0.01
-        if "Cell cooling surface area [m2]" not in p:
-            p["Cell cooling surface area [m2]"] = 0.02
         return p
 
     def solve_mechanical_integrity(self, T_avg: float, cs_avg: float, L: float) -> Dict[str, float]:
@@ -58,6 +47,7 @@ class OptimizationValidator:
         cs_val = float(np.mean(cs_avg))
 
         if dolfinx is None:
+            # Simple physical proxy
             E = 10e9
             alpha_t = 1e-5
             alpha_s = 2e-5
@@ -85,9 +75,13 @@ class OptimizationValidator:
             return {"max_stress_pa": 0.0, "mechanical_integrity_factor": 0.0}
 
     def run_validation(self):
-        print("Running high-fidelity DFN validation...")
+        print("Running high-fidelity DFN validation with degradation (Layer 4)...")
         params = self.get_final_parameters()
-        model = pybamm.lithium_ion.DFN({"thermal": "lumped"})
+        model = pybamm.lithium_ion.DFN({
+            "SEI": "solvent-diffusion limited",
+            "loss of active material": "stress-driven",
+            "thermal": "lumped"
+        })
         sim = pybamm.Simulation(model, parameter_values=params)
 
         try:
@@ -95,30 +89,26 @@ class OptimizationValidator:
             v = sol["Terminal voltage [V]"].data
             cap = sol["Discharge capacity [A.h]"].data[-1]
 
-            # Use safe variable access
-            def get_var_data(s, key):
-                 try:
-                     return s[key].data
-                 except Exception:
-                     return None
+            temp_key = "Volume-averaged cell temperature [K]"
+            try:
+                 temp = sol[temp_key].data
+            except Exception:
+                 temp_key = "Cell temperature [K]"
+                 temp = sol[temp_key].data
 
-            temp = get_var_data(sol, "Volume-averaged cell temperature [K]")
-            if temp is None: temp = get_var_data(sol, "Cell temperature [K]")
-            if temp is None: temp = np.array([298.15])
-
-            cs_n = get_var_data(sol, "X-averaged negative particle concentration [mol.m-3]")
-            if cs_n is None: cs_n = np.array([0.0])
+            cs_n = sol["X-averaged negative particle concentration [mol.m-3]"].data
 
             mech = self.solve_mechanical_integrity(temp[-1], cs_n[-1], self.design.get("Negative electrode thickness [m]", 100e-6))
 
             trapz_func = getattr(np, "trapezoid", getattr(np, "trapz", None))
             energy = trapz_func(v * sol["Current [A]"].data, sol["Time [s]"].data) / 3600
 
-            sei_t = get_var_data(sol, "X-averaged SEI thickness [m]")
-            sei_growth = (sei_t[-1] - sei_t[0]) if sei_t is not None else 0.0
-
-            stress_proxy = params["Positive particle radius [m]"] * 1e5 * cap
-            n_cycles = 1000 * np.exp(- (sei_growth * 1e8 + stress_proxy * 0.1))
+            sei_growth = 0.0
+            try:
+                 sei_t = sol["X-averaged negative SEI thickness [m]"].data
+                 sei_growth = sei_t[-1] - sei_t[0]
+            except:
+                 pass
 
             attributes = {
                 "energy_wh": float(energy),
@@ -127,8 +117,7 @@ class OptimizationValidator:
                 "max_temp_k": float(np.max(temp)),
                 "max_stress_pa": mech["max_stress_pa"],
                 "mechanical_integrity_factor": mech["mechanical_integrity_factor"],
-                "cycle_life_proxy": int(n_cycles),
-                "thermal_margin": float(333.15 - np.max(temp))
+                "sei_growth_m": float(sei_growth)
             }
 
             print("Validation complete.")
@@ -136,15 +125,14 @@ class OptimizationValidator:
             return attributes
         except Exception as e:
             print(f"Validation failed: {e}")
-            traceback.print_exc()
             return None
 
 if __name__ == "__main__":
     from src.cell_optimization.parameter_opts import run_workflow
-    best_design_result = run_workflow()
-    if best_design_result:
+    result = run_workflow()
+    if result:
         validator = OptimizationValidator(
-            best_design_result.get("design_specs", {}),
-            best_design_result.get("combined_deltas", {})
+            result.get("design_specs", {}),
+            result.get("combined_deltas", {})
         )
         validator.run_validation()

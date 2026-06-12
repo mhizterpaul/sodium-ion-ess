@@ -3,12 +3,11 @@ import pybamm
 import logging
 import json
 import os
-import traceback
 from typing import Dict, Any, List, Tuple, Optional
 from scipy.optimize import minimize
 from nfpp_sodium_ion.src.cell_parameters.cell_alpha import get_parameter_values
 
-# --- DESIGN SPACE ---
+# --- DESIGN SPACE (θ) ---
 DESIGN_SPACE = [
     "Positive electrode thickness [m]",
     "Negative electrode thickness [m]",
@@ -64,8 +63,6 @@ class ParamTransform:
                 self._apply_scaling("Positive electrode conductivity [S.m-1]", np.exp(d["conductivity_log_delta"]))
             if "electrolyte_conductivity_log_delta" in d:
                 self._apply_scaling("Electrolyte conductivity [S.m-1]", np.exp(d["electrolyte_conductivity_log_delta"]))
-            if "electrolyte_diffusivity_log_delta" in d:
-                self._apply_scaling("Electrolyte diffusivity [m2.s-1]", np.exp(d["electrolyte_diffusivity_log_delta"]))
 
         if "kinetic" in deltas:
             d = deltas["kinetic"]
@@ -73,8 +70,6 @@ class ParamTransform:
                 self._apply_scaling("Positive electrode exchange-current density [A.m-2]", np.exp(d["exchange_current_log_delta"]))
             if "sei_growth_log_delta" in d:
                 self._apply_scaling("SEI reaction exchange current density [A.m-2]", np.exp(d["sei_growth_log_delta"]))
-            if "sei_resistivity_log_delta" in d:
-                 self._apply_scaling("SEI resistivity [Ohm.m]", np.exp(d["sei_resistivity_log_delta"]))
 
     def apply_design_vector(self, x: np.ndarray, names: List[str]):
         for val, name in zip(x, names):
@@ -88,88 +83,123 @@ class ParamTransform:
             self.values_dict["Cell volume [m3]"] = 0.13 * 0.07 * 0.01
         if "Cell cooling surface area [m2]" not in self.values_dict:
             self.values_dict["Cell cooling surface area [m2]"] = 0.02
+        if "Total heat transfer coefficient [W.m-2.K-1]" not in self.values_dict:
+            self.values_dict["Total heat transfer coefficient [W.m-2.K-1]"] = 10.0
+        if "SEI solvent diffusivity [m2.s-1]" not in self.values_dict:
+            self.values_dict["SEI solvent diffusivity [m2.s-1]"] = 2.5e-22
+        if "Bulk solvent concentration [mol.m-3]" not in self.values_dict:
+            self.values_dict["Bulk solvent concentration [mol.m-3]"] = 2636.0
         return pybamm.ParameterValues(self.values_dict)
 
-# --- OPTIMIZATION ENGINE ---
+# --- PARETO OPTIMIZATION ENGINE (Layer 3) ---
 
-class OptimizerEngine:
+def dominates(obj_a: np.ndarray, obj_b: np.ndarray) -> bool:
+    """Checks if vector A dominates vector B (MAXIMIZATION)."""
+    return np.all(obj_a >= obj_b) and np.any(obj_a > obj_b)
+
+class ParetoOptimizer:
     def __init__(self, base_params: pybamm.ParameterValues):
         self.base_params = base_params
-        try:
-             self.model = pybamm.lithium_ion.SPM()
-        except:
-             self.model = None
+        self.model = pybamm.lithium_ion.SPM({
+            "SEI": "solvent-diffusion limited",
+            "loss of active material": "stress-driven",
+            "thermal": "lumped"
+        })
 
     def simulate(self, params: pybamm.ParameterValues) -> Dict[str, float]:
-        if self.model is None: return {"energy": 0, "success": False}
         try:
             inputs = {"Current [A]": params["Nominal cell capacity [A.h]"]}
             sim = pybamm.Simulation(self.model, parameter_values=params)
             sol = sim.solve([0, 3600], inputs=inputs)
 
             v = sol["Terminal voltage [V]"].data
-            cap = sol["Discharge capacity [A.h]"].data[-1]
+            curr = sol["Current [A]"].data
+            p = v * curr
+            t = sol["Time [s]"].data
 
             trapz_func = getattr(np, "trapezoid", getattr(np, "trapz", None))
-            energy = trapz_func(v * sol["Current [A]"].data, sol["Time [s]"].data) / 3600
+            energy = trapz_func(p, t) / 3600
+            power = np.max(p)
 
-            v_initial = v[0]
-            v_step = v[1] if len(v) > 1 else v[0]
-            curr = abs(sol["Current [A]"].data[0])
-            r_int = abs(v_initial - v_step) / (curr + 1e-6)
+            m_stability = 0.0
+            try:
+                 sei_growth = sol["X-averaged negative SEI thickness [m]"].data[-1] - sol["X-averaged negative SEI thickness [m]"].data[0]
+                 m_stability = -sei_growth * 1e8
+            except:
+                 m_stability = -float(params["Positive particle radius [m]"]) * 1e6
 
-            t_max = 298.15
-            thermal_margin = 333.15 - t_max
-
-            sei_growth = 0.0
-            stress_proxy = params["Positive particle radius [m]"] * 1e5 * cap
-            n_cycles = 1000 * np.exp(- (sei_growth * 1e8 + stress_proxy * 0.1))
+            # Internal Resistance proxy
+            r_int = abs(v[0] - v[1]) / (abs(curr[0]) + 1e-6) if len(v) > 1 else 0.0
 
             return {
                 "energy": float(energy),
-                "capacity": float(cap),
+                "power": float(power),
+                "mechanical_stability": float(m_stability),
                 "avg_voltage": float(np.mean(v)),
                 "internal_resistance": float(r_int),
-                "thermal_margin": float(thermal_margin),
-                "cycle_life": float(n_cycles),
                 "success": True
             }
         except Exception:
-            return {"energy": 0, "success": False}
+            return {"success": False}
 
-    def pybamm_loss(self, metrics: Dict[str, float]) -> float:
-        if not metrics.get("success", False):
-            return 1e6
-        score = (1.0 * metrics["energy"] +
-                 0.5 * metrics["thermal_margin"] +
-                 0.01 * metrics["cycle_life"] -
-                 50.0 * metrics["internal_resistance"])
-        return -score
+    def compute_jacobian(self, params: pybamm.ParameterValues) -> np.ndarray:
+        """Computes G_ij = dJ_i / dp_j."""
+        eps = 1e-4
+        base_res = self.simulate(params)
+        if not base_res["success"]: return np.zeros((3, len(DESIGN_SPACE)))
 
-    def optimize(self, material_deltas: Dict[str, Any]) -> Tuple[np.ndarray, Dict[str, float]]:
-        bounds = [
-            (30e-6, 150e-6), (30e-6, 150e-6),
-            (0.2, 0.5), (0.2, 0.5),
-            (1e-7, 10e-6), (1e-7, 10e-6),
-            (0.3, 0.7),
-            (0.02, 0.15)
-        ]
+        j_base = np.array([base_res["energy"], base_res["power"], base_res["mechanical_stability"]])
+        G = np.zeros((3, len(DESIGN_SPACE)))
 
+        for j, name in enumerate(DESIGN_SPACE):
+            x_base = []
+            for n in DESIGN_SPACE:
+                if n == "carbon_fraction": x_base.append(0.05)
+                else: x_base.append(params[n])
+            x_base = np.array(x_base)
+
+            x_perturbed = x_base.copy()
+            x_perturbed[j] *= (1 + eps)
+
+            pt = ParamTransform(self.base_params)
+            pt.values_dict = dict(params)
+            pt.apply_design_vector(x_perturbed, DESIGN_SPACE)
+
+            res = self.simulate(pt.get_parameter_values())
+            if res["success"]:
+                j_pert = np.array([res["energy"], res["power"], res["mechanical_stability"]])
+                G[:, j] = (j_pert - j_base) / (np.abs(j_base) * eps + 1e-12)
+        return G
+
+    def find_pareto_set(self, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        pareto = []
+        for i, c1 in enumerate(candidates):
+            dominated = False
+            obj_a = np.array([c1["metrics"]["energy"], c1["metrics"]["power"], c1["metrics"]["mechanical_stability"]])
+            for j, c2 in enumerate(candidates):
+                if i == j: continue
+                obj_b = np.array([c2["metrics"]["energy"], c2["metrics"]["power"], c2["metrics"]["mechanical_stability"]])
+                if dominates(obj_b, obj_a):
+                    dominated = True
+                    break
+            if not dominated:
+                pareto.append(c1)
+        return pareto
+
+    def optimize_design(self, material_deltas: Dict[str, Any], initial_x: np.ndarray) -> Tuple[np.ndarray, Dict[str, float]]:
+        bounds = [(30e-6, 150e-6), (30e-6, 150e-6), (0.2, 0.5), (0.2, 0.5), (1e-7, 10e-6), (1e-7, 10e-6), (0.3, 0.7), (0.02, 0.15)]
         def objective(x):
             pt = ParamTransform(self.base_params)
             pt.apply_physics_deltas(material_deltas)
             pt.apply_design_vector(x, DESIGN_SPACE)
             res = self.simulate(pt.get_parameter_values())
-            return self.pybamm_loss(res)
-
-        x0 = np.array([0.5 * (b[0] + b[1]) for b in bounds])
-        res = minimize(objective, x0, bounds=bounds, method='L-BFGS-B', options={'maxiter': 5})
-
+            if not res["success"]: return 1e6
+            return -(1.0 * res["energy"] + 0.1 * res["power"] + 0.01 * res["mechanical_stability"])
+        res = minimize(objective, initial_x, bounds=bounds, method='L-BFGS-B', options={'maxiter': 10})
         final_pt = ParamTransform(self.base_params)
         final_pt.apply_physics_deltas(material_deltas)
         final_pt.apply_design_vector(res.x, DESIGN_SPACE)
-        metrics = self.simulate(final_pt.get_parameter_values())
-        return res.x, metrics
+        return res.x, self.simulate(final_pt.get_parameter_values())
 
 def run_workflow():
     from src.cell_optimization.material_opt import MaterialMappingEngine, MaterialCategory
@@ -178,68 +208,62 @@ def run_workflow():
     engine = MaterialMappingEngine()
     db, bases = engine.run()
     if not bases: return
+    opt = ParetoOptimizer(pybamm.ParameterValues(engine.base_params))
 
-    opt = OptimizerEngine(pybamm.ParameterValues(engine.base_params))
-
-    all_results = []
+    all_runs = []
     cathodes = db[MaterialCategory.CATHODE_DOPANT] or [None]
     salts = db[MaterialCategory.SALT] or [None]
-    funcs = db[MaterialCategory.FUNCTIONALIZATION] or [None]
 
-    print(f"Iterating through material combinations...")
-    for cat in cathodes[:2]: # Limit for demo speed
-        for salt in salts[:2]:
-            for func in funcs[:1]:
-                deltas = {}
-                if cat:
-                    d = derive_coupled_deltas(bases["cathode"]["properties"], cat.properties,
-                                            bases["cathode"]["formula"], cat.composition)
-                    for k, v in d.items(): deltas.setdefault(k, {}).update(v)
-                if salt:
-                    d = regularize_salt_props(bases["salt"]["solution"], salt.properties)
-                    for k, v in d.items(): deltas.setdefault(k, {}).update(v)
-                if func:
-                    d = regularize_functionalization(func.properties)
-                    for k, v in d.items(): deltas.setdefault(k, {}).update(v)
+    print("Executing Multi-Objective Pareto Optimization (Layer 3)...")
+    for cat in cathodes[:1]:
+        for salt in salts[:1]:
+            deltas = {}
+            if cat:
+                d = derive_coupled_deltas(bases["cathode"]["properties"], cat.properties, bases["cathode"]["formula"], cat.composition)
+                for k, v in d.items(): deltas.setdefault(k, {}).update(v)
+            if salt:
+                d = regularize_salt_props(bases["salt"]["solution"], salt.properties)
+                for k, v in d.items(): deltas.setdefault(k, {}).update(v)
 
-                x_opt, metrics = opt.optimize(deltas)
-                if metrics.get("success"):
-                     all_results.append({
-                        "cat": cat, "salt": salt, "func": func,
-                        "x_opt": x_opt, "metrics": metrics, "deltas": deltas
-                     })
+            x_opt, metrics = opt.optimize_design(deltas, np.array([100e-6, 100e-6, 0.3, 0.3, 1e-6, 5e-6, 0.5, 0.05]))
+            if metrics.get("success"):
+                all_runs.append({"cat": cat, "salt": salt, "x": x_opt, "metrics": metrics, "deltas": deltas})
 
-    if not all_results:
-        print("No successful optimization runs.")
-        return
+    if not all_runs: return
+    pareto_set = opt.find_pareto_set(all_runs)
+    best = pareto_set[0]
 
-    # Rank by Energy
-    all_results.sort(key=lambda x: x["metrics"]["energy"], reverse=True)
-    best = all_results[0]
+    final_pt = ParamTransform(opt.base_params)
+    final_pt.apply_physics_deltas(best["deltas"])
+    final_pt.apply_design_vector(best["x"], DESIGN_SPACE)
+    G = opt.compute_jacobian(final_pt.get_parameter_values())
 
+    groups = {"Energy": [], "Power": [], "Stability": []}
+    obj_names = ["Energy", "Power", "Stability"]
+    for j, name in enumerate(DESIGN_SPACE):
+        dominant_obj = np.argmax(np.abs(G[:, j]))
+        groups[obj_names[dominant_obj]].append(name)
+
+    # REQUIRED OUTPUT FORMAT
     output = {
         "materials": {
-            "cathode": {
-                "name": best["cat"].name if best["cat"] else "Base",
-                "formula": best["cat"].composition if best["cat"] else bases["cathode"]["formula"]
-            },
-            "electrolyte": {
-                "salt": best["salt"].name if best["salt"] else "Base",
-                "functionalization": best["func"].name if best["func"] else "None"
-            }
+            "cathode": {"name": best["cat"].name if best["cat"] else "Base", "formula": best["cat"].composition if best["cat"] else "Base"},
+            "electrolyte": {"salt": best["salt"].name if best["salt"] else "Base"}
         },
         "cell_parameters": {
-            "voltage": round(best["metrics"].get("avg_voltage", 0), 3),
-            "energy_density": round(best["metrics"].get("energy", 0) * 15, 2),
-            "internal_resistance": round(best["metrics"].get("internal_resistance", 0), 4),
-            "thermal_margin": round(best["metrics"].get("thermal_margin", 0), 2),
-            "cycle_life": int(best["metrics"].get("cycle_life", 0))
+            "voltage": round(best["metrics"]["avg_voltage"], 3),
+            "energy_density_Wh": round(best["metrics"]["energy"], 3), # Proxy
+            "internal_resistance": round(best["metrics"]["internal_resistance"], 4),
+            "power_W": round(best["metrics"]["power"], 3),
+            "mechanical_stability_proxy": round(best["metrics"]["mechanical_stability"], 3)
         },
-        "design_specs": dict(zip(DESIGN_SPACE, best["x_opt"].tolist())),
+        "parameter_grouping": groups,
+        "sensitivity_matrix": G.tolist(),
+        "design_specs": dict(zip(DESIGN_SPACE, best["x"].tolist())),
         "combined_deltas": best["deltas"]
     }
 
-    print("\nFINAL SYSTEM OUTPUT (RANKED BEST):")
+    print("\nFINAL OPTIMIZED OUTPUT:")
     print(json.dumps(output, indent=2))
     return output
 

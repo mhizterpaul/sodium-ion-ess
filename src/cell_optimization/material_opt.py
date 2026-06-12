@@ -53,7 +53,7 @@ DOPANTS = ["Mn", "Cr", "Ni"]
 
 OQMD_URL = "https://oqmd.org/oqmdapi/formationenergy"
 CACHE_FILE = "material_cache.json"
-CACHE_VERSION = "v21"
+CACHE_VERSION = "v22"
 
 @dataclass
 class MaterialCandidate:
@@ -69,7 +69,6 @@ class MaterialMappingEngine:
         self.cache = self._load_cache()
         self.session = self._setup_session() if requests else None
         self.base_params = get_parameter_values()
-        # SECURE RETRIEVAL OF API KEY
         self.mp_key = os.environ.get("MP_API_KEY")
 
     def _setup_session(self):
@@ -130,7 +129,7 @@ class MaterialMappingEngine:
         return None, "NONE"
 
     def run(self) -> Tuple[Dict[MaterialCategory, List[MaterialCandidate]], Dict[str, Any]]:
-        print(f"Executing Strict Material Resolution...")
+        print(f"Executing Strict Material Resolution (Layer 1)...")
         system = {cat: [] for cat in MaterialCategory}
         bases = {}
 
