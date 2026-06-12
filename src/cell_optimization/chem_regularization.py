@@ -2,49 +2,30 @@ import re
 import math
 import numpy as np
 from typing import Dict, Set, List, Optional, Any
+from pymatgen.core import Composition
 
+# 2.1 Proper physical normalization layer
 KT = 0.0259 # eV at 300K
 
-def parse_stoich(formula: str) -> Dict[str, float]:
-    """Parses a chemical formula into element counts."""
-    tokens = re.findall(r'([A-Z][a-z]?)(\d*\.?\d*)', formula)
-    result = {}
-    for element, amount in tokens:
-        result[element] = float(amount) if amount else 1.0
-    return result
+def thermo_norm(x, ref=0.0):
+    return (x - ref) / KT
 
-def thermo_norm(x, ref):
-    """Material-energy scale normalization."""
-    return (x - ref) / max(abs(ref), 0.1)
-
-def stoich_norm(formula_dict: Dict[str, float]) -> Dict[str, float]:
-    """Normalizes stoichiometric counts to sum to 1."""
-    total = sum(formula_dict.values())
-    if total == 0: return {k: 0.0 for k in formula_dict}
-    return {k: v / total for k, v in formula_dict.items()}
-
-def stoich_distance(base: Dict[str, float], proxy: Dict[str, float]) -> float:
-    """Computes the difference between normalized stoichiometries."""
-    keys = set(base) | set(proxy)
-    return sum(abs(base.get(k, 0.0) - proxy.get(k, 0.0)) for k in keys)
+def stoich_norm(formula: str) -> dict:
+    try:
+        comp = Composition(formula)
+        total = sum(comp.values())
+        if total == 0: return {}
+        return {k: v / total for k, v in comp.items()}
+    except Exception:
+        return {}
 
 def geom_norm(props, base_props):
+    vp = props.get("volume_per_atom", 15.0)
+    vb = base_props.get("volume_per_atom", 15.0)
     return {
-        "volume_ratio": props["volume_per_atom"] / base_props["volume_per_atom"],
-        "strain": (props["volume_per_atom"] - base_props["volume_per_atom"]) / (base_props["volume_per_atom"] + 1e-9)
+        "volume_ratio": vp / vb,
+        "strain": (vp - vb) / vb
     }
-
-def apply_connectivity_scaling(props: Dict[str, float], phi: float = 0.75) -> Dict[str, float]:
-    """Physically grounded connectivity-based scaling for organosiloxanes."""
-    scaled = props.copy()
-    a_density = 1.0
-    if "volume_per_atom" in scaled:
-        scaled["volume_per_atom"] = scaled["volume_per_atom"] / (phi**a_density)
-    if "formation_energy" in scaled:
-        scaled["formation_energy"] = scaled["formation_energy"] * phi
-    if "stability" in scaled:
-        scaled["stability"] = scaled["stability"] / (phi + 1e-9)
-    return scaled
 
 def compute_chemical_realization(
     base_formula: str,
@@ -53,77 +34,84 @@ def compute_chemical_realization(
     proxy_props: Dict[str, float]
 ) -> float:
     """How safely can this proxy perturb the base material?"""
-    def safe(x, ref=0.0):
-        try: return float(x)
-        except (TypeError, ValueError): return ref
+    try:
+        c_base = stoich_norm(base_formula)
+        c_proxy = stoich_norm(proxy_formula)
+        shared = set(c_base) & set(c_proxy)
+        overlap = sum(min(c_base[e], c_proxy.get(e, 0)) for e in shared)
 
-    base_s = stoich_norm(parse_stoich(base_formula))
-    proxy_s = stoich_norm(parse_stoich(proxy_formula))
-    stoich_penalty = stoich_distance(base_s, proxy_s)
+        # Physical Residual Mismatch
+        dE = abs(thermo_norm(proxy_props["formation_energy"], base_props["formation_energy"]))
+        dV = abs(geom_norm(proxy_props, base_props)["strain"]) / 0.05
 
-    e_base = set(base_s.keys())
-    e_proxy = set(proxy_s.keys())
-    r_chem = len(e_base & e_proxy) / max(len(e_base | e_proxy), 1)
+        # Realization score
+        realization = np.tanh(overlap * 3.0) * np.exp(-0.5 * (dE + dV))
+        return float(np.clip(realization, 0.01, 1.0))
+    except Exception:
+        return 0.1
 
-    dE = thermo_norm(safe(proxy_props.get("formation_energy")), safe(base_props.get("formation_energy")))
-    dV = (safe(proxy_props.get("volume_per_atom")) - safe(base_props.get("volume_per_atom"))) / (safe(base_props.get("volume_per_atom")) + 1e-9)
+# 2.2-2.5 Rebuild derive_coupled_deltas
+def derive_coupled_deltas(base_props, proxy_props, base_formula, proxy_formula) -> dict:
+    # 2.3 Physical residuals
+    dE = thermo_norm(proxy_props["formation_energy"], base_props["formation_energy"])
+    dG = (proxy_props["band_gap"] - base_props["band_gap"]) / 1.0
+    dV = geom_norm(proxy_props, base_props)["strain"]
+    # Stability: lower is better (Energy above hull).
+    # If proxy has HIGHER energy above hull, it is LESS stable.
+    # Positive dS here means LESS stable.
+    dS = (proxy_props["stability"] - base_props["stability"]) / 0.2
 
-    z = (3.0 * r_chem - 1.5 * abs(dE) - 1.0 * abs(dV) - 2.0 * stoich_penalty)
-    z = np.clip(z, -10, 10)
-    return float(1.0 / (1.0 + np.exp(-z)))
+    # Realization Factor
+    R = compute_chemical_realization(base_formula, proxy_formula, base_props, proxy_props)
 
-def get_regularized_residuals(
-    base_props: Dict[str, float],
-    proxy_props: Dict[str, float],
-    realization: float = 1.0
-) -> Dict[str, float]:
-    """Core Regularization: Computes attenuated physical residuals."""
-    r = float(realization)
-    dE = thermo_norm(proxy_props["formation_energy"], base_props["formation_energy"]) * r
-    dG = ((proxy_props["band_gap"] - base_props["band_gap"]) / 1.0) * r
-    dV = geom_norm(proxy_props, base_props)["strain"] * r
-    dS = ((base_props["stability"] - proxy_props["stability"]) / 0.2) * r
+    # 2.4 Physics coupling rules (Direct physics mapping, attenuated by R)
+    voltage_boost = -0.05 * dE * R
+    diffusivity_log_delta = (0.5 * dV - 0.2 * dG) * R
+    reaction_rate_log_delta = (0.1 * dE - 0.3 * dG) * R
+    stability_shift = dS * R
 
-    return {"dE": float(dE), "dG": float(dG), "dV": float(dV), "dS": float(dS)}
-
-def regularize_material(candidate_obj: Any, base_dict: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Consolidated Regularization Entry Point.
-    Handles crystal (dopant, functionalization) and solution (salt) descriptors.
-    """
-    if candidate_obj.category == "Salt":
-        # Solution-phase scaling
-        props = candidate_obj.properties
-        base_props = base_dict["solution"]
-
-        # Scalar residuals for solution properties
-        residuals = {
-            "d_cond": (props["conductivity"] - base_props["conductivity"]) / base_props["conductivity"],
-            "d_trans": (props["transference_number"] - base_props["transference_number"]) / base_props["transference_number"],
-            "d_visc": (props["viscosity"] - base_props["viscosity"]) / base_props["viscosity"]
-        }
-        return {
-            "residuals": residuals,
-            "realization": 1.0, # Salts in DB are 100% physically relevant
-            "proxy_uncertainty": 0.0,
-            "is_network": False
-        }
-
-    # Crystal-phase scaling (Dopants, Functionalization)
-    props = candidate_obj.properties
-    base_props = base_dict["properties"]
-    base_formula = base_dict["formula"]
-
-    is_network = candidate_obj.category == "Functionalization_Proxy"
-    if is_network:
-        props = apply_connectivity_scaling(props, phi=0.75)
-
-    realization = compute_chemical_realization(base_formula, candidate_obj.composition, base_props, props)
-    residuals = get_regularized_residuals(base_props, props, realization=realization)
-
+    # 2.5 Structured channels
     return {
-        "residuals": residuals,
-        "realization": realization,
-        "proxy_uncertainty": (1.0 - realization)**2,
-        "is_network": is_network
+        "thermodynamic": {
+            "voltage_boost": float(voltage_boost),
+            "stability_shift": float(stability_shift)
+        },
+        "kinetic": {
+            "exchange_current_log_delta": float(reaction_rate_log_delta)
+        },
+        "transport": {
+            "diffusivity_log_delta": float(diffusivity_log_delta),
+            "conductivity_log_delta": -0.5 * dG * R
+        },
+        "structural": {
+            "strain": float(dV * R)
+        }
+    }
+
+def regularize_salt_props(base_salt_props: Dict[str, float], candidate_salt_props: Dict[str, float]) -> Dict[str, Any]:
+    try:
+        c_ratio = candidate_salt_props["conductivity"] / base_salt_props["conductivity"]
+        v_ratio = candidate_salt_props["viscosity"] / base_salt_props["viscosity"]
+        t_diff = candidate_salt_props["transference_number"] - base_salt_props["transference_number"]
+        return {
+            "transport": {
+                "electrolyte_conductivity_log_delta": float(np.log(c_ratio)),
+                "electrolyte_diffusivity_log_delta": float(-np.log(v_ratio)),
+                "transference_number_delta": float(t_diff)
+            }
+        }
+    except Exception: return {"transport": {}}
+
+def regularize_functionalization(candidate_props: Dict[str, float]) -> Dict[str, Any]:
+    return {
+        "kinetic": {
+            "sei_growth_log_delta": float(np.log(candidate_props.get("sei_growth_factor", 1.0))),
+            "exchange_current_log_delta": float(np.log(candidate_props.get("exchange_current_factor", 1.0)))
+        },
+        "transport": {
+            "sei_resistivity_log_delta": float(np.log(candidate_props.get("resistance_growth_factor", 1.0)))
+        },
+        "thermodynamic": {
+            "initial_sodium_loss_delta": float(candidate_props.get("initial_sodium_loss_factor", 1.0) - 1.0)
+        }
     }

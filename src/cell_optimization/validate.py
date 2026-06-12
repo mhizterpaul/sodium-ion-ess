@@ -2,11 +2,13 @@ import pybamm
 import numpy as np
 import scipy.io as sio
 import os
-import math
+import json
+import traceback
 from typing import Dict, Any, List, Tuple
 from nfpp_sodium_ion.src.cell_parameters.cell_alpha import get_parameter_values
-from src.cell_optimization.material_opt import MaterialMappingEngine, MaterialCandidate
-from src.cell_optimization.chem_regularization import regularize_material
+from src.cell_optimization.material_opt import MaterialMappingEngine, MaterialCategory, MaterialCandidate
+from src.cell_optimization.chem_regularization import derive_coupled_deltas, regularize_salt_props, regularize_functionalization
+from src.cell_optimization.parameter_opts import ParamTransform, OptimizerEngine
 
 try:
     import dolfinx
@@ -19,34 +21,52 @@ except ImportError:
 
 class OptimizationValidator:
     """
-    Multi-physics Digital Twin Validator.
-    Orchestrates the 3-layer flow and performs high-fidelity mechanical integrity analysis using FEniCSx.
+    High-fidelity validation using DFN model and dolfinx mechanics.
     """
 
-    def __init__(self, optimized_design: Dict[str, float], material_info: List[Tuple[MaterialCandidate, Dict[str, Any]]]):
+    def __init__(self, optimized_design: Dict[str, float], combined_deltas: Dict[str, Any]):
         self.design = optimized_design
-        self.materials_reg = material_info
+        self.deltas = combined_deltas
 
     def get_final_parameters(self) -> pybamm.ParameterValues:
         base_params = get_parameter_values()
-        from src.cell_optimization.parameter_opt import ParamTransform
-        transform = ParamTransform(base_params)
-        transform.apply_design(np.array(list(self.design.values())), list(self.design.keys()))
-        for cand, reg in self.materials_reg:
-            transform.apply_physics(reg, cand.category)
+        pt = ParamTransform(pybamm.ParameterValues(base_params))
 
-        params = transform.evaluate()
-        if "Cell volume [m3]" not in params:
-            params["Cell volume [m3]"] = 0.130 * 0.070 * 0.0003
-        return params
+        # Apply physics
+        pt.apply_physics_deltas(self.deltas)
+
+        # Apply design vector
+        from src.cell_optimization.parameter_opts import DESIGN_SPACE
+        pt.apply_design_vector(
+            np.array([self.design[k] for k in DESIGN_SPACE if k in self.design]),
+            [k for k in DESIGN_SPACE if k in self.design]
+        )
+
+        p = pt.get_parameter_values()
+        # Ensure thermal parameters are set
+        if "Cell volume [m3]" not in p:
+            p["Cell volume [m3]"] = 0.13 * 0.07 * 0.01
+        if "Cell cooling surface area [m2]" not in p:
+            p["Cell cooling surface area [m2]"] = 2 * (0.13 * 0.07 + 0.13 * 0.01 + 0.07 * 0.01)
+        return p
 
     def solve_mechanical_integrity(self, T_avg: float, cs_avg: float, L: float) -> Dict[str, float]:
         """
         High-fidelity 1D Thermo-Mechanical Solver using FEniCSx (dolfinx).
         Evaluates electrode structural integrity under max strain conditions.
         """
+        # Ensure T_avg and cs_avg are scalars
+        T_val = float(np.mean(T_avg))
+        cs_val = float(np.mean(cs_avg))
+
         if dolfinx is None:
-            return {"max_stress_pa": 0.0, "mechanical_integrity_factor": 1.0}
+            # Simple physical proxy if dolfinx is missing
+            E = 10e9
+            alpha_t = 1e-5
+            alpha_s = 2e-5
+            strain = alpha_t * (T_val - 298.15) + alpha_s * cs_val
+            stress = E * strain
+            return {"max_stress_pa": float(stress), "mechanical_integrity_factor": float(stress / 50e6)}
 
         # Create mesh for electrode thickness
         domain = mesh.create_interval(MPI.COMM_WORLD, 20, [0, L])
@@ -57,17 +77,13 @@ class OptimizationValidator:
 
         # Physics Constants
         E = 10e9  # Young's modulus (Pa)
-        nu = 0.3  # Poisson's ratio
         alpha_t = 1e-5 # Thermal expansion
         alpha_s = 2e-5 # Swelling coefficient
 
-        # Loadings derived from PyBaMM state
-        delta_T = T_avg - 298.15
-        delta_c = cs_avg
+        # Loadings
+        delta_T = T_val - 298.15
+        delta_c = cs_val
 
-        # Strain formulation: epsilon = du/dx - alpha_t*dT - alpha_s*dc
-        # Stress formulation (1D): sigma = E * epsilon
-        # Residual: integral( sigma * dv/dx ) dx = 0
         a = ufl.inner(E * ufl.grad(u)[0], ufl.grad(v)[0]) * ufl.dx
         L_rhs = ufl.inner(E * (alpha_t * delta_T + alpha_s * delta_c), ufl.grad(v)[0]) * ufl.dx
 
@@ -79,89 +95,59 @@ class OptimizationValidator:
         problem = LinearProblem(a, L_rhs, bcs=[bc], petsc_options={"ksp_type": "preonly", "pc_type": "lu"})
         uh = problem.solve()
 
-        # Calculate Stress
+        # Calculate Stress (simplified 1D)
         sigma = E * (np.gradient(uh.x.array, L/20.0) - alpha_t * delta_T - alpha_s * delta_c)
         max_sigma = np.max(np.abs(sigma))
 
-        yield_stress = 50e6 # 50 MPa limit
         return {
             "max_stress_pa": float(max_sigma),
-            "mechanical_integrity_factor": float(max_sigma / yield_stress)
+            "mechanical_integrity_factor": float(max_sigma / 50e6)
         }
 
     def run_validation(self):
-        print("Running final Digital Twin validation (PyBaMM + FEniCSx)...")
+        print("Running high-fidelity DFN validation...")
         params = self.get_final_parameters()
         model = pybamm.lithium_ion.DFN({"thermal": "lumped"})
-        solver = pybamm.CasadiSolver(mode="safe")
-        sim = pybamm.Simulation(model, parameter_values=params, solver=solver)
+
+        sim = pybamm.Simulation(model, parameter_values=params)
 
         try:
             sol = sim.solve([0, 3600], inputs={"Current [A]": params["Nominal cell capacity [A.h]"]})
 
-            v = sol["Terminal voltage [V]"].entries
-            cap = sol["Discharge capacity [A.h]"].entries[-1]
-            temp = sol["Cell temperature [K]"].entries
-            cs_n = sol["X-averaged negative particle concentration [mol.m-3]"].entries
+            v = sol["Terminal voltage [V]"].data
+            cap = sol["Discharge capacity [A.h]"].data[-1]
+            temp = sol["Volume-averaged cell temperature [K]"].data
+            cs_n = sol["X-averaged negative particle concentration [mol.m-3]"].data
 
-            # Mechanical integrity at max state (end of discharge)
-            mech = self.solve_mechanical_integrity(temp[-1], cs_n[-1], self.design.get("Negative electrode thickness [m]", 1.2e-4))
+            # Mechanical integrity
+            mech = self.solve_mechanical_integrity(temp[-1], cs_n[-1], self.design.get("Negative electrode thickness [m]", 100e-6))
 
-            trapezoid = getattr(np, "trapezoid", getattr(np, "trapz", None))
-            energy = trapezoid(v, sol["Discharge capacity [A.h]"].entries)
+            trapz_func = getattr(np, "trapezoid", getattr(np, "trapz", None))
+            energy = trapz_func(v * sol["Current [A]"].data, sol["Time [s]"].data) / 3600
 
             attributes = {
-                "Energy_Wh": float(energy),
-                "Capacity_Ah": float(cap),
-                "Nominal_Voltage_V": float(np.mean(v)),
-                "Max_Temp_K": float(np.max(temp)),
-                "Max_Stress_Pa": mech["max_stress_pa"],
-                "Mechanical_Integrity_Safety_Factor": mech["mechanical_integrity_factor"],
-                "Energy_Density_Wh_kg": float(energy / 0.5)
+                "energy_wh": float(energy),
+                "capacity_ah": float(cap),
+                "voltage_avg": float(np.mean(v)),
+                "max_temp_k": float(np.max(temp)),
+                "max_stress_pa": mech["max_stress_pa"],
+                "mechanical_integrity_factor": mech["mechanical_integrity_factor"]
             }
 
-            print("Final Validated Attributes:")
-            for k, v in attributes.items():
-                print(f"  {k}: {v}")
+            print("Validation complete.")
+            print(json.dumps(attributes, indent=2))
             return attributes
         except Exception as e:
             print(f"Validation failed: {e}")
+            traceback.print_exc()
             return None
 
-    def export_results(self, attributes, output_path="src/bms_design/cell_attributes.mat"):
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        sio.savemat(output_path, {"cell_attributes": attributes})
-        print(f"Cell attributes exported to {output_path}")
-
 if __name__ == "__main__":
-    engine = MaterialMappingEngine()
-    db, bases = engine.run()
-
-    # Selection
-    candidates = [
-        [m for m in db["Cathode_Dopant"] if m.name == "Mn"][0],
-        [m for m in db["Salt"] if m.name == "NaBOB"][0],
-        db["Functionalization"][0]
-    ]
-
-    materials_reg = [(c, regularize_material(c, (bases["cathode"] if "Dopant" in c.category else bases["salt"] if "Salt" in c.category else bases["interface"]))) for c in candidates]
-
-    optimized_design = {
-        "Positive electrode thickness [m]": 0.00015,
-        "Negative electrode thickness [m]": 0.00015,
-        "Positive electrode porosity": 0.3,
-        "Negative electrode porosity": 0.3,
-        "Separator porosity": 0.5,
-        "Positive electrode Bruggeman coefficient (electrolyte)": 1.5,
-        "Negative electrode Bruggeman coefficient (electrolyte)": 1.5,
-        "Positive electrode active material volume fraction": 0.65,
-        "Positive particle radius [m]": 1e-6,
-        "Negative particle radius [m]": 5e-6,
-        "Typical electrolyte concentration [mol.m-3]": 1000.0,
-        "Positive electrode conductive carbon fraction": 0.08
-    }
-
-    validator = OptimizationValidator(optimized_design, materials_reg)
-    res = validator.run_validation()
-    if res:
-        validator.export_results(res)
+    from src.cell_optimization.parameter_opts import run_workflow
+    best_design_result = run_workflow()
+    if best_design_result:
+        validator = OptimizationValidator(
+            best_design_result.get("design_specs", {}),
+            best_design_result.get("combined_deltas", {})
+        )
+        validator.run_validation()
