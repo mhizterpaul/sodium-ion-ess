@@ -57,9 +57,9 @@ def derive_coupled_deltas(base_props, proxy_props, base_formula, proxy_formula) 
     dV = geom_norm(proxy_props, base_props)["strain"]
 
     # Stability: lower is better (Energy above hull).
-    # If proxy has HIGHER energy above hull, it is LESS stable.
-    # Positive dS here means LESS stable.
-    dS = (proxy_props.get("stability", 0) - base_props.get("stability", 0)) / 0.2
+    # If proxy has LOWER energy above hull than base, it is MORE stable.
+    # Positive dS now indicates IMPROVEMENT (MORE stable).
+    dS = (base_props.get("stability", 0) - proxy_props.get("stability", 0)) / 0.2
 
     # Realization Factor
     R = compute_chemical_realization(base_formula, proxy_formula, base_props, proxy_props)

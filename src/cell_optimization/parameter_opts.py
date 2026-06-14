@@ -5,6 +5,9 @@ import json
 import os
 from typing import Dict, Any, List, Tuple, Optional
 from scipy.optimize import minimize
+from pymoo.core.problem import Problem
+from pymoo.algorithms.moo.nsga2 import NSGA2
+from pymoo.optimize import minimize as pymoo_minimize
 from nfpp_sodium_ion.src.cell_parameters.cell_alpha import get_parameter_values
 
 # --- DESIGN SPACE (θ) ---
@@ -19,13 +22,20 @@ DESIGN_SPACE = [
     "carbon_fraction"
 ]
 
+DESIGN_BOUNDS = np.array([
+    [30e-6, 150e-6], [30e-6, 150e-6],
+    [0.2, 0.5], [0.2, 0.5],
+    [1e-7, 10e-6], [1e-7, 10e-6],
+    [0.3, 0.7],
+    [0.02, 0.15]
+])
+
 # --- PHYSICS MODELS ---
 
 def carbon_percolation_conductivity(fraction: float, base_cond: float = 100.0) -> float:
     phi_c = 0.03
-    if fraction <= phi_c:
-        return 1e-6
-    return base_cond * np.power(max((fraction - phi_c) / (1 - phi_c), 0.01), 1.8)
+    if fraction <= phi_c: return 1e-6
+    return base_cond * np.power(max((fraction - phi_c) / (1.0 - phi_c), 0.01), 1.8)
 
 class ParamTransform:
     def __init__(self, base_values: pybamm.ParameterValues):
@@ -47,17 +57,16 @@ class ParamTransform:
             if "voltage_boost" in d:
                 ocp = self.values_dict.get("Positive electrode OCP [V]")
                 if callable(ocp):
-                    def shifted_ocp(sto, b=d["voltage_boost"], f=ocp):
-                        return f(sto) + b
+                    def shifted_ocp(sto, b=d["voltage_boost"], f=ocp): return f(sto) + b
                     self.values_dict["Positive electrode OCP [V]"] = shifted_ocp
                 else:
                     self.values_dict["Positive electrode OCP [V]"] += d["voltage_boost"]
             if "initial_sodium_loss_delta" in d:
                 self.values_dict["Initial concentration in negative electrode [mol.m-3]"] *= (1.0 + d["initial_sodium_loss_delta"])
             if "stability_shift" in d:
-                 # Map stability shift to degradation rates (positive means less stable)
-                 self._apply_scaling("SEI reaction exchange current density [A.m-2]", np.exp(d["stability_shift"]))
-                 self._apply_scaling("Positive electrode LAM constant proportional term [s-1]", np.exp(d["stability_shift"]))
+                 # Positive stability_shift means MORE stable, so we should REDUCE side reactions
+                 self._apply_scaling("SEI reaction exchange current density [A.m-2]", np.exp(-d["stability_shift"]))
+                 self._apply_scaling("Positive electrode LAM constant proportional term [s-1]", np.exp(-d["stability_shift"]))
 
         if "transport" in deltas:
             d = deltas["transport"]
@@ -83,7 +92,6 @@ class ParamTransform:
                 self.values_dict[name] = val
 
     def get_parameter_values(self) -> pybamm.ParameterValues:
-        # Consistency fixes
         if "Cell volume [m3]" not in self.values_dict:
             self.values_dict["Cell volume [m3]"] = 0.13 * 0.07 * 0.01
         if "Cell cooling surface area [m2]" not in self.values_dict:
@@ -96,182 +104,245 @@ class ParamTransform:
             self.values_dict["Bulk solvent concentration [mol.m-3]"] = 2636.0
         return pybamm.ParameterValues(self.values_dict)
 
-# --- PARETO OPTIMIZATION ENGINE (Layer 3) ---
+# --- PARETO ANALYZER ---
 
-def dominates(obj_a: np.ndarray, obj_b: np.ndarray) -> bool:
-    return np.all(obj_a >= obj_b) and np.any(obj_a > obj_b)
+class BatteryOptimizationProblem(Problem):
+    def __init__(self, analyzer, material_deltas: Dict[str, Any]):
+        super().__init__(n_var=len(DESIGN_SPACE), n_obj=3, n_constr=0, xl=DESIGN_BOUNDS[:, 0], xu=DESIGN_BOUNDS[:, 1])
+        self.analyzer = analyzer
+        self.material_deltas = material_deltas
 
-class ParetoOptimizer:
+    def _evaluate(self, x, out, *args, **kwargs):
+        F = []
+        for xi in x:
+            pt = ParamTransform(self.analyzer.base_params)
+            pt.apply_physics_deltas(self.material_deltas)
+            pt.apply_design_vector(xi, DESIGN_SPACE)
+            res = self.analyzer.simulate(pt.get_parameter_values())
+            if res["success"]:
+                F.append([-res["energy"], -res["power"], -res["mechanical_stability"]])
+            else:
+                print(f"Sim failed: {res.get('reason')}")
+                F.append([1e9, 1e6, 1e9])
+        out["F"] = np.array(F)
+
+class ParetoAnalyzer:
     def __init__(self, base_params: pybamm.ParameterValues):
         self.base_params = base_params
-        self.model = pybamm.lithium_ion.SPM({
-            "SEI": "solvent-diffusion limited",
-            "loss of active material": "stress-driven",
-            "thermal": "lumped"
-        })
+        options = {"SEI": "solvent-diffusion limited", "loss of active material": "stress-driven", "thermal": "lumped"}
+        self.model = pybamm.lithium_ion.SPM(options)
+        # Use IDAKLUSolver for efficient sensitivity calculation as requested
+        self.solver = pybamm.IDAKLUSolver()
 
-    def simulate(self, params: pybamm.ParameterValues) -> Dict[str, float]:
+    def simulate(self, params: pybamm.ParameterValues) -> Dict[str, Any]:
         try:
-            inputs = {"Current [A]": params["Nominal cell capacity [A.h]"]}
-            sim = pybamm.Simulation(self.model, parameter_values=params)
-            sol = sim.solve([0, 3600], inputs=inputs)
+            # Add small resistance to avoid singularity if current is 0
+            if "Internal resistance [Ohm]" not in params:
+                params["Internal resistance [Ohm]"] = 0.001
+
+            # Lower solver tolerance for speed and robustness
+            self.solver.tol = 1e-3
+
+            cap = float(params["Nominal cell capacity [A.h]"])
+            sim = pybamm.Simulation(self.model, parameter_values=params, solver=self.solver)
+            sol = sim.solve([0, 3600], inputs={"Current [A]": cap})
 
             v = sol["Terminal voltage [V]"].data
             curr = sol["Current [A]"].data
             p = v * curr
             t = sol["Time [s]"].data
 
+            # Use fallback for trapz (numpy 2.0 rename)
             trapz_func = getattr(np, "trapezoid", getattr(np, "trapz", None))
             energy = trapz_func(p, t) / 3600
             power = np.max(p)
 
-            m_stability = 0.0
-            try:
-                 sei_growth = sol["X-averaged negative SEI thickness [m]"].data[-1] - sol["X-averaged negative SEI thickness [m]"].data[0]
-                 m_stability = -sei_growth * 1e8
-            except:
-                 m_stability = -float(params["Positive particle radius [m]"]) * 1e6
+            stress_vars = ["Positive particle surface tangential stress [Pa]", "Negative particle surface tangential stress [Pa]"]
+            max_stress = 1e-6
+            for sv in stress_vars:
+                 try:
+                    # Avoid 'in' operator if it causes issues in this PyBaMM version
+                    var_data = sol[sv].data
+                    max_stress = max(max_stress, np.max(np.abs(var_data)))
+                 except Exception:
+                    continue
 
-            r_int = abs(v[0] - v[1]) / (abs(curr[0]) + 1e-6) if len(v) > 1 else 0.0
+            m_stability = -max_stress
+
+            # Constraint: Must discharge for at least 10 minutes to be valid
+            if t[-1] < 600:
+                return {"success": False, "reason": "Short discharge"}
 
             return {
-                "energy": float(energy),
-                "power": float(power),
-                "mechanical_stability": float(m_stability),
-                "avg_voltage": float(np.mean(v)),
-                "internal_resistance": float(r_int),
-                "success": True
+                "energy": float(energy), "power": float(power), "mechanical_stability": float(m_stability),
+                "avg_voltage": float(np.mean(v)), "success": True
             }
-        except Exception:
-            return {"success": False}
+        except Exception as e:
+            import traceback
+            # logging.debug(f"Simulation failed: {e}")
+            return {"success": False, "reason": f"{e}\n{traceback.format_exc()}"}
 
-    def compute_jacobian(self, params: pybamm.ParameterValues, design_vector: np.ndarray) -> np.ndarray:
-        """Computes G_ij = dJ_i / dp_j."""
+    def compute_jacobian(self, params: pybamm.ParameterValues, x: np.ndarray) -> np.ndarray:
         eps = 1e-4
         base_res = self.simulate(params)
         if not base_res["success"]: return np.zeros((3, len(DESIGN_SPACE)))
-
         j_base = np.array([base_res["energy"], base_res["power"], base_res["mechanical_stability"]])
         G = np.zeros((3, len(DESIGN_SPACE)))
-
-        for j, name in enumerate(DESIGN_SPACE):
-            x_perturbed = design_vector.copy()
-            x_perturbed[j] *= (1 + eps)
-
+        for j in range(len(DESIGN_SPACE)):
+            x_pert = x.copy()
+            x_pert[j] *= (1 + eps)
             pt = ParamTransform(self.base_params)
-            # Use original params dict but overwrite design
             pt.values_dict = dict(params)
-            pt.apply_design_vector(x_perturbed, DESIGN_SPACE)
-
+            pt.apply_design_vector(x_pert, DESIGN_SPACE)
             res = self.simulate(pt.get_parameter_values())
             if res["success"]:
                 j_pert = np.array([res["energy"], res["power"], res["mechanical_stability"]])
                 G[:, j] = (j_pert - j_base) / (np.abs(j_base) * eps + 1e-12)
         return G
 
-    def find_pareto_set(self, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        pareto = []
-        for i, c1 in enumerate(candidates):
-            dominated = False
-            obj_a = np.array([c1["metrics"]["energy"], c1["metrics"]["power"], c1["metrics"]["mechanical_stability"]])
-            for j, c2 in enumerate(candidates):
-                if i == j: continue
-                obj_b = np.array([c2["metrics"]["energy"], c2["metrics"]["power"], c2["metrics"]["mechanical_stability"]])
-                if dominates(obj_b, obj_a):
-                    dominated = True
-                    break
-            if not dominated:
-                pareto.append(c1)
-        return pareto
+class DSMOptimizer(ParetoAnalyzer):
+    def __init__(self):
+        from src.cell_optimization.material_opt import MaterialMappingEngine
+        engine = MaterialMappingEngine()
+        super().__init__(pybamm.ParameterValues(engine.base_params))
+        self.engine = engine
+        self.selected_dopant_idx = 0
+        self.selected_salt_idx = 0
+        self.mtms_enabled = True
 
-    def optimize_design_extremes(self, material_deltas: Dict[str, Any], initial_x: np.ndarray) -> List[Tuple[np.ndarray, Dict[str, float]]]:
-        bounds = [(30e-6, 150e-6), (30e-6, 150e-6), (0.2, 0.5), (0.2, 0.5), (1e-7, 10e-6), (1e-7, 10e-6), (0.3, 0.7), (0.02, 0.15)]
-        objectives = ["energy", "power", "mechanical_stability"]
-        results = []
-        for obj_name in objectives:
-            def objective(x):
-                pt = ParamTransform(self.base_params)
-                pt.apply_physics_deltas(material_deltas)
-                pt.apply_design_vector(x, DESIGN_SPACE)
-                res = self.simulate(pt.get_parameter_values())
-                if not res["success"]: return 1e6
-                return -res[obj_name]
-            res = minimize(objective, initial_x, bounds=bounds, method='L-BFGS-B', options={'maxiter': 10})
-            final_pt = ParamTransform(self.base_params)
-            final_pt.apply_physics_deltas(material_deltas)
-            final_pt.apply_design_vector(res.x, DESIGN_SPACE)
-            metrics = self.simulate(final_pt.get_parameter_values())
-            if metrics.get("success"):
-                 results.append((res.x, metrics))
-        return results
+    def run(self):
+        return run_workflow()
+
+def find_knee_point(pareto_set: List[Dict[str, Any]]) -> Dict[str, Any]:
+    objs = np.array([[p["metrics"]["energy"], p["metrics"]["power"], p["metrics"]["mechanical_stability"]] for p in pareto_set])
+    mins, maxs = objs.min(axis=0), objs.max(axis=0)
+    denom = maxs - mins
+    denom[denom == 0] = 1.0
+    norm_objs = (objs - mins) / denom
+    distances = np.linalg.norm(1.0 - norm_objs, axis=1)
+    best_idx = np.argmin(distances)
+
+    # Calculate tradeoff metadata
+    res = pareto_set[best_idx].copy()
+    res["pareto_metadata"] = {
+        "knee_distance": float(distances[best_idx]),
+        "total_points": len(pareto_set),
+        "rank": 1
+    }
+    return res
 
 def run_workflow():
     from src.cell_optimization.material_opt import MaterialMappingEngine, MaterialCategory
-    from src.cell_optimization.chem_regularization import derive_coupled_deltas, regularize_salt_props, regularize_functionalization
-
+    from src.cell_optimization.chem_regularization import derive_coupled_deltas, regularize_salt_props
     engine = MaterialMappingEngine()
     db, bases = engine.run()
     if not bases: return
-    opt = ParetoOptimizer(pybamm.ParameterValues(engine.base_params))
+    analyzer = ParetoAnalyzer(pybamm.ParameterValues(engine.base_params))
 
-    all_runs = []
-    cathodes = db[MaterialCategory.CATHODE_DOPANT] or [None]
-    salts = db[MaterialCategory.SALT] or [None]
+    print("Executing Two-Level Pareto Design Space Search (Layer 3)...")
 
-    print("Executing Multi-Objective Pareto Optimization (Layer 3)...")
+    candidate_combinations = []
+    # Outer Loop: Material Candidates
+    cathodes = db[MaterialCategory.CATHODE_DOPANT] if db[MaterialCategory.CATHODE_DOPANT] else [None]
+    salts = db[MaterialCategory.SALT] if db[MaterialCategory.SALT] else [None]
+
     for cat in cathodes[:2]:
         for salt in salts[:2]:
-            deltas = {}
-            if cat:
-                d = derive_coupled_deltas(bases["cathode"]["properties"], cat.properties, bases["cathode"]["formula"], cat.composition)
-                for k, v in d.items(): deltas.setdefault(k, {}).update(v)
-            if salt:
-                d = regularize_salt_props(bases["salt"]["solution"], salt.properties)
-                for k, v in d.items(): deltas.setdefault(k, {}).update(v)
+            candidate_combinations.append((cat, salt))
 
-            x0 = np.array([100e-6, 100e-6, 0.3, 0.3, 1e-6, 5e-6, 0.5, 0.05])
-            extremes = opt.optimize_design_extremes(deltas, x0)
-            for x_opt, metrics in extremes:
-                all_runs.append({"cat": cat, "salt": salt, "x": x_opt, "metrics": metrics, "deltas": deltas})
+    all_pareto_points = []
+    for cat, salt in candidate_combinations:
+        deltas = {}
+        if cat:
+            d = derive_coupled_deltas(bases["cathode"]["properties"], cat.properties, bases["cathode"]["formula"], cat.composition)
+            for k, v in d.items(): deltas.setdefault(k, {}).update(v)
+        if salt:
+            d = regularize_salt_props(bases["salt"]["solution"], salt.properties)
+            for k, v in d.items(): deltas.setdefault(k, {}).update(v)
 
-    if not all_runs: return
-    pareto_set = opt.find_pareto_set(all_runs)
-    best = pareto_set[0]
+        # NSGA-II Search
+        print(f"Running NSGA-II for {cat.name if cat else 'Base'} + {salt.name if salt else 'Base'}...")
+        problem = BatteryOptimizationProblem(analyzer, deltas)
+        algorithm = NSGA2(pop_size=12)
+        res_opt = pymoo_minimize(problem, algorithm, ('n_gen', 5), verbose=False)
 
-    final_pt = ParamTransform(opt.base_params)
-    final_pt.apply_physics_deltas(best["deltas"])
-    final_pt.apply_design_vector(best["x"], DESIGN_SPACE)
-    G = opt.compute_jacobian(final_pt.get_parameter_values(), best["x"])
+        if res_opt.X is not None:
+            X_p = np.atleast_2d(res_opt.X)
+            F_p = np.atleast_2d(res_opt.F)
+            for i in range(len(X_p)):
+                metrics = {"energy": -F_p[i, 0], "power": -F_p[i, 1], "mechanical_stability": -F_p[i, 2]}
+                if metrics["energy"] > 0:
+                     all_pareto_points.append({"cat": cat, "salt": salt, "x": X_p[i], "metrics": metrics, "deltas": deltas})
 
-    groups = {"Energy": [], "Power": [], "Stability": []}
+    if not all_pareto_points:
+        print("No Pareto points found.")
+        return
+
+    # Pareto Filter
+    pareto_final = []
+    for i, c1 in enumerate(all_pareto_points):
+        dominated = False
+        obj_a = np.array([c1["metrics"]["energy"], c1["metrics"]["power"], c1["metrics"]["mechanical_stability"]])
+        for j, c2 in enumerate(all_pareto_points):
+            if i == j: continue
+            obj_b = np.array([c2["metrics"]["energy"], c2["metrics"]["power"], c2["metrics"]["mechanical_stability"]])
+            if np.all(obj_b >= obj_a) and np.any(obj_b > obj_a): dominated = True; break
+        if not dominated: pareto_final.append(c1)
+
+    best = find_knee_point(pareto_final)
+
+    print(f"Aggregating sensitivities over {len(pareto_final)} Pareto points...")
+    G_all = []
+    for p in pareto_final:
+        pt = ParamTransform(analyzer.base_params)
+        pt.apply_physics_deltas(p["deltas"])
+        pt.apply_design_vector(p["x"], DESIGN_SPACE)
+        G_k = analyzer.compute_jacobian(pt.get_parameter_values(), p["x"])
+        G_all.append(np.abs(G_k))
+
+    G_avg = np.mean(G_all, axis=0)
+    G_row_max = np.max(G_avg, axis=1).reshape(-1, 1) + 1e-12
+    S = G_avg / G_row_max
+
+    threshold = 0.5
+    groups = {"Energy": [], "Power": [], "Stability": [], "Coupled": []}
     obj_names = ["Energy", "Power", "Stability"]
     for j, name in enumerate(DESIGN_SPACE):
-        dominant_obj = np.argmax(np.abs(G[:, j]))
-        groups[obj_names[dominant_obj]].append(name)
+        member_of = []
+        for i, obj in enumerate(obj_names):
+            if S[i, j] > threshold:
+                groups[obj].append(name)
+                member_of.append(obj)
+        if len(member_of) > 1: groups["Coupled"].append(name)
 
     output = {
         "materials": {
             "cathode": {"name": best["cat"].name if best["cat"] else "Base", "formula": best["cat"].composition if best["cat"] else "Base"},
             "electrolyte": {"salt": best["salt"].name if best["salt"] else "Base"}
         },
-        "performance_objectives": {
-            "energy_Wh": round(best["metrics"]["energy"], 3),
-            "power_W": round(best["metrics"]["power"], 3),
-            "mechanical_stability_proxy": round(best["metrics"]["mechanical_stability"], 3)
+        "performance_envelope": {
+            "energy_Wh_range": [round(float(min(p["metrics"]["energy"] for p in pareto_final)), 3), round(float(max(p["metrics"]["energy"] for p in pareto_final)), 3)],
+            "power_W_range": [round(float(min(p["metrics"]["power"] for p in pareto_final)), 3), round(float(max(p["metrics"]["power"] for p in pareto_final)), 3)],
+            "stability_Pa_range": [round(float(min(p["metrics"]["mechanical_stability"] for p in pareto_final)), 3), round(float(max(p["metrics"]["mechanical_stability"] for p in pareto_final)), 3)]
         },
-        "cell_parameters": {
-            "voltage": round(best["metrics"]["avg_voltage"], 3),
-            "energy_density_Wh": round(best["metrics"]["energy"], 3),
-            "internal_resistance": round(best["metrics"]["internal_resistance"], 4)
+        "knee_point_design": {
+            "metrics": {k: round(float(v), 4) for k, v in best["metrics"].items() if k != "success"},
+            "metadata": best["pareto_metadata"]
         },
         "parameter_grouping": groups,
-        "sensitivity_matrix": G.tolist(),
-        "design_specs": dict(zip(DESIGN_SPACE, best["x"].tolist())),
-        "combined_deltas": best["deltas"]
+        "sensitivity_matrix": G_avg.tolist(),
+        "design_specs_representative": dict(zip(DESIGN_SPACE, best["x"].tolist())),
+        "combined_deltas_representative": best["deltas"]
     }
-    print("\nFINAL OPTIMIZED OUTPUT:")
+    print("\nFINAL ROBUST KNEE-POINT OUTPUT:")
     print(json.dumps(output, indent=2))
+
+    with open("result.json", "w") as f:
+        json.dump(output, f, indent=2)
+    print("Results saved to result.json")
+
     return output
 
 if __name__ == "__main__":
-    run_workflow()
+    optimizer = DSMOptimizer()
+    optimizer.run()

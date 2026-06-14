@@ -8,7 +8,7 @@ from typing import Dict, Any, List, Tuple
 from nfpp_sodium_ion.src.cell_parameters.cell_alpha import get_parameter_values
 from src.cell_optimization.material_opt import MaterialMappingEngine, MaterialCategory, MaterialCandidate
 from src.cell_optimization.chem_regularization import derive_coupled_deltas, regularize_salt_props, regularize_functionalization
-from src.cell_optimization.parameter_opts import ParamTransform, ParetoOptimizer, DESIGN_SPACE
+from src.cell_optimization.parameter_opts import ParamTransform, DSMOptimizer, DESIGN_SPACE
 
 try:
     import dolfinx
@@ -77,6 +77,12 @@ class OptimizationValidator:
     def run_validation(self):
         print("Running high-fidelity DFN validation with degradation (Layer 4)...")
         params = self.get_final_parameters()
+        # Add missing parameters for DFN stability
+        if "SEI solvent diffusivity [m2.s-1]" not in params:
+             params["SEI solvent diffusivity [m2.s-1]"] = 2.5e-22
+        if "Bulk solvent concentration [mol.m-3]" not in params:
+             params["Bulk solvent concentration [mol.m-3]"] = 2636.0
+
         model = pybamm.lithium_ion.DFN({
             "SEI": "solvent-diffusion limited",
             "loss of active material": "stress-driven",
@@ -128,11 +134,38 @@ class OptimizationValidator:
             return None
 
 if __name__ == "__main__":
-    from src.cell_optimization.parameter_opts import run_workflow
-    result = run_workflow()
+    import json
+    import os
+
+    result_path = "result.json"
+    if not os.path.exists(result_path):
+        print(f"File {result_path} not found. Running optimization...")
+        from src.cell_optimization.parameter_opts import run_workflow
+        result = run_workflow()
+    else:
+        with open(result_path, "r") as f:
+            result = json.load(f)
+
     if result:
+        print("\n--- VALIDATION LOG ---")
+        print(f"Selected Cathode: {result['materials']['cathode']['name']} ({result['materials']['cathode']['formula']})")
+        print(f"Selected Electrolyte Salt: {result['materials']['electrolyte']['salt']}")
+        print(f"Optimized Parameters:")
+        for k, v in result['design_specs_representative'].items():
+            print(f"  {k}: {v}")
+        print("----------------------\n")
+
         validator = OptimizationValidator(
-            result.get("design_specs", {}),
-            result.get("combined_deltas", {})
+            result.get("design_specs_representative", {}),
+            result.get("combined_deltas_representative", {})
         )
-        validator.run_validation()
+        val_metrics = validator.run_validation()
+
+        # Merge results for report.ipynb compliance
+        final_report = {
+            "optimization": result,
+            "validation": val_metrics
+        }
+        with open("final_validation.json", "w") as f:
+            json.dump(final_report, f, indent=2)
+        print("Final validation report saved to final_validation.json")

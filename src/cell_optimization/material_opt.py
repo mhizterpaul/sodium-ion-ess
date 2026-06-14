@@ -94,8 +94,8 @@ class MaterialMappingEngine:
         except IOError as e:
             logging.warning(f"Failed to save cache: {e}")
 
-    def _resolve_material(self, formula: str, source_override: Optional[str] = None) -> Tuple[Optional[Dict[str, float]], str]:
-        cache_key = f"RESOLVE:{formula}:{CACHE_VERSION}"
+    def _resolve_material(self, formula: str, source_override: Optional[str] = None, chemsys: Optional[str] = None) -> Tuple[Optional[Dict[str, float]], str]:
+        cache_key = f"RESOLVE:{formula if not chemsys else chemsys}:{CACHE_VERSION}"
         if cache_key in self.cache:
             return self.cache[cache_key]["props"], self.cache[cache_key].get("source", "UNKNOWN")
 
@@ -103,7 +103,11 @@ class MaterialMappingEngine:
         if MPRester and self.mp_key and (source_override == "MP" or source_override is None):
             try:
                 with MPRester(api_key=self.mp_key) as mpr:
-                    docs = mpr.materials.summary.search(formula=formula, fields=['formation_energy_per_atom', 'energy_above_hull', 'band_gap', 'volume', 'nsites'])
+                    if chemsys:
+                        docs = mpr.materials.summary.search(chemsys=chemsys, fields=['formula_pretty', 'formation_energy_per_atom', 'energy_above_hull', 'band_gap', 'volume', 'nsites'])
+                    else:
+                        docs = mpr.materials.summary.search(formula=formula, fields=['formation_energy_per_atom', 'energy_above_hull', 'band_gap', 'volume', 'nsites'])
+
                     if docs:
                         docs.sort(key=lambda d: d.energy_above_hull)
                         best = docs[0]
@@ -161,13 +165,14 @@ class MaterialMappingEngine:
             return system, {}
 
         for d in DOPANTS:
-            f = f"Na4Fe2.7{d}0.3P4O15"
-            p, src = self._resolve_material(f)
+            chemsys = f"Na-Fe-{d}-P-O"
+            p, src = self._resolve_material(formula=f"Na4Fe2.7{d}0.3P4O15", chemsys=chemsys)
             if not p:
-                f = f"Na{d}PO4"
-                p, src = self._resolve_material(f)
+                chemsys = f"Na-{d}-P-O"
+                p, src = self._resolve_material(formula=f"Na{d}PO4", chemsys=chemsys)
+
             if p:
-                system[MaterialCategory.CATHODE_DOPANT].append(MaterialCandidate(name=f"{d}-doped", category=MaterialCategory.CATHODE_DOPANT, composition=f, properties=p, provenance=src))
+                system[MaterialCategory.CATHODE_DOPANT].append(MaterialCandidate(name=f"{d}-doped", category=MaterialCategory.CATHODE_DOPANT, composition=f"Doped-{d}", properties=p, provenance=src))
 
         for name in ALLOWED_SALTS:
             system[MaterialCategory.SALT].append(MaterialCandidate(name=name, category=MaterialCategory.SALT, composition=name, properties=SALT_DATABASE[name], provenance="LITERATURE"))
