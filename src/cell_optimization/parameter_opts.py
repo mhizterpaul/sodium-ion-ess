@@ -109,11 +109,12 @@ class ParamTransform:
 # --- INDIVIDUAL OBJECTIVE OPTIMIZER ---
 
 class HierarchicalOptimizer:
-    def __init__(self, base_params: Optional[pybamm.ParameterValues] = None):
-        from src.cell_optimization.material_opt import MaterialMappingEngine
-        engine = MaterialMappingEngine()
-        self.base_params = base_params or pybamm.ParameterValues(engine.base_params)
+    def __init__(self, engine: Optional[Any] = None, base_params: Optional[pybamm.ParameterValues] = None):
+        if engine is None:
+            from src.cell_optimization.material_opt import MaterialMappingEngine
+            engine = MaterialMappingEngine()
         self.engine = engine
+        self.base_params = base_params or pybamm.ParameterValues(engine.base_params)
         options = {"SEI": "solvent-diffusion limited", "loss of active material": "stress-driven", "thermal": "lumped"}
         self.model = pybamm.lithium_ion.SPM(options)
         self.solver = pybamm.IDAKLUSolver()
@@ -167,16 +168,18 @@ class HierarchicalOptimizer:
         return 1e9
 
     def run(self):
-        return run_workflow()
+        return run_workflow(engine=self.engine)
 
-def run_workflow():
+def run_workflow(engine: Optional[Any] = None):
     from src.cell_optimization.material_opt import MaterialMappingEngine, MaterialCategory
     from src.cell_optimization.chem_regularization import derive_coupled_deltas, regularize_salt_props, regularize_functionalization
 
-    engine = MaterialMappingEngine()
+    if engine is None:
+        engine = MaterialMappingEngine()
+
     db, bases = engine.run()
     if not bases: return
-    optimizer = HierarchicalOptimizer(pybamm.ParameterValues(engine.base_params))
+    optimizer = HierarchicalOptimizer(engine=engine, base_params=pybamm.ParameterValues(engine.base_params))
 
     print("Executing Hierarchical Optimization (Layer 3)...")
     print("Each objective function is individually optimized and then composed.")
