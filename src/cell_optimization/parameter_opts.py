@@ -172,7 +172,7 @@ class HierarchicalOptimizer:
 
 def run_workflow(engine: Optional[Any] = None):
     from src.cell_optimization.material_opt import MaterialMappingEngine, MaterialCategory
-    from src.cell_optimization.chem_regularization import derive_coupled_deltas, regularize_salt_props, regularize_functionalization
+    from src.cell_optimization.chem_regularization import derive_coupled_deltas, regularize_salt_props
 
     if engine is None:
         engine = MaterialMappingEngine()
@@ -186,10 +186,10 @@ def run_workflow(engine: Optional[Any] = None):
 
     cathodes = db[MaterialCategory.CATHODE_DOPANT] if db[MaterialCategory.CATHODE_DOPANT] else [None]
     salts = db[MaterialCategory.SALT] if db[MaterialCategory.SALT] else [None]
-    functionalizations = db[MaterialCategory.FUNCTIONALIZATION] if db[MaterialCategory.FUNCTIONALIZATION] else [None]
+    # MTMS functionalization is excluded from ranking search and handled in Layer 4 (Validation)
 
     material_results = []
-    for cat, salt, func in [(c, s, f) for c in cathodes[:2] for s in salts[:2] for f in functionalizations[:1]]:
+    for cat, salt in [(c, s) for c in cathodes[:2] for s in salts[:2]]:
         deltas = {}
         if cat:
             d = derive_coupled_deltas(bases["cathode"]["properties"], cat.properties, bases["cathode"]["formula"], cat.composition)
@@ -197,11 +197,8 @@ def run_workflow(engine: Optional[Any] = None):
         if salt:
             d = regularize_salt_props(bases["salt"]["properties"], salt.properties)
             for k, v in d.items(): deltas.setdefault(k, {}).update(v)
-        if func:
-             d = regularize_functionalization(bases["interface"]["properties"], func.properties)
-             for k, v in d.items(): deltas.setdefault(k, {}).update(v)
 
-        print(f"Optimizing system: {cat.name if cat else 'Base'} + {salt.name if salt else 'Base'} + {func.name if func else 'None'}")
+        print(f"Optimizing system: {cat.name if cat else 'Base'} + {salt.name if salt else 'Base'}")
 
         x0 = np.array([np.mean(b) for b in DESIGN_BOUNDS])
         opt_designs = {}
@@ -220,7 +217,7 @@ def run_workflow(engine: Optional[Any] = None):
         if final_metrics["success"]:
             # Score is based on total energy density for physical grounding
             material_results.append({
-                "cat": cat, "salt": salt, "func": func,
+                "cat": cat, "salt": salt,
                 "x": final_x, "metrics": final_metrics, "deltas": deltas,
                 "score": final_metrics["energy"]
             })
@@ -234,8 +231,7 @@ def run_workflow(engine: Optional[Any] = None):
     output = {
         "materials": {
             "cathode": {"name": best["cat"].name if best["cat"] else "Base", "formula": best["cat"].composition if best["cat"] else "Base"},
-            "electrolyte": {"salt": best["salt"].name if best["salt"] else "Base"},
-            "functionalization": {"name": best["func"].name if best["func"] else "None"}
+            "electrolyte": {"salt": best["salt"].name if best["salt"] else "Base"}
         },
         "knee_point_design": {
             "metrics": {k: round(float(v), 4) for k, v in best["metrics"].items() if k != "success"},

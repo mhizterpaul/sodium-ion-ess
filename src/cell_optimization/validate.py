@@ -4,7 +4,7 @@ import scipy.io as sio
 import os
 import json
 import traceback
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Optional
 from nfpp_sodium_ion.src.cell_parameters.cell_alpha import get_parameter_values
 from src.cell_optimization.material_opt import MaterialMappingEngine, MaterialCategory, MaterialCandidate
 from src.cell_optimization.chem_regularization import derive_coupled_deltas, regularize_salt_props, regularize_functionalization
@@ -22,13 +22,25 @@ except ImportError:
 class OptimizationValidator:
     """
     High-fidelity validation using DFN model and dolfinx mechanics.
+    MTMS functionalization is applied here as a fixed design step.
     """
 
-    def __init__(self, optimized_design: Dict[str, float], combined_deltas: Dict[str, Any]):
+    def __init__(self, optimized_design: Dict[str, float], combined_deltas: Dict[str, Any], engine: Optional[MaterialMappingEngine] = None):
         self.design = optimized_design
         self.deltas = combined_deltas
+        self.engine = engine or MaterialMappingEngine()
 
     def get_final_parameters(self) -> pybamm.ParameterValues:
+        # 1. Resolve MTMS and apply deltas
+        db, bases = self.engine.run()
+        if MaterialCategory.FUNCTIONALIZATION in db and db[MaterialCategory.FUNCTIONALIZATION]:
+            mtms = db[MaterialCategory.FUNCTIONALIZATION][0]
+            print(f"Applying fixed functionalization: {mtms.name}")
+            f_deltas = regularize_functionalization(bases["interface"]["properties"], mtms.properties)
+            # Merge functionalization deltas into combined deltas
+            for cat, props in f_deltas.items():
+                self.deltas.setdefault(cat, {}).update(props)
+
         base_params = get_parameter_values()
         pt = ParamTransform(pybamm.ParameterValues(base_params))
         pt.apply_physics_deltas(self.deltas)
