@@ -56,21 +56,17 @@ class MaterialCandidate:
     properties: Dict[str, Any]
     provenance: str = "OQMD"
 
-def enforce_charge_balance(base_charge, dopant_charge, x):
-    # Simplistic charge balance check: assuming substitution on Fe site
-    # This check ensures that the net oxidation state change is minimal or handled
-    # In practice, x is small [0.05, 0.15]
-    return True # Placeholder for more complex site-specific balance if needed
-
 def generate_doped_formula(dopant, x):
-    # Proper site-fraction constraint substitution on Fe site in Na4Fe3(PO4)2P2O7
-    # For simplicity, we model it as Na4 Fe(3-x) Dopant(x) P4 O15 (simplified)
-    # or follow the user's specific template: Na4Fe{2-x}Dopant{x}P4O15
-    return f"Na4Fe{3.0-x:.2f}{dopant}{x:.2f}P4O15"
+    # Normalized site fraction model
+    Fe_sites = 3.0
+    fe = Fe_sites * (1.0 - x)
+    dop = Fe_sites * x
+    return f"Na4Fe{fe:.2f}{dopant}{dop:.2f}P4O15"
 
 class MaterialMappingEngine:
     def __init__(self):
         logging.basicConfig(level=logging.INFO)
+        # MP API Key must be configured via environment variable
         self.mp_key = os.environ.get("MP_API_KEY")
         self.cache = self._load_cache()
         self.session = self._setup_session() if requests else None
@@ -113,10 +109,11 @@ class MaterialMappingEngine:
             if not docs: return None, "NONE", formula
             # Sorted by stability (energy above hull)
             docs = sorted(docs, key=lambda d: d.energy_above_hull)[:5]
-            # Boltzmann weighting for ensemble average
-            # Use a small epsilon to avoid div by zero if all are 0
+
+            # Tunable eV scale for weighting (Issue 8)
+            T_eff = 0.1
             e_hull = np.array([float(d.energy_above_hull) for d in docs])
-            weights = np.exp(-e_hull / 0.0259) # Weight by thermal stability
+            weights = np.exp(-e_hull / T_eff)
             weights /= np.sum(weights)
 
             p = {
@@ -135,7 +132,7 @@ class MaterialMappingEngine:
                     if chemsys:
                         docs = mpr.materials.summary.search(chemsys=chemsys, fields=['formula_pretty', 'formation_energy_per_atom', 'energy_above_hull', 'band_gap', 'volume', 'nsites'])
                     else:
-                        docs = mpr.materials.summary.search(formula=formula, fields=['formula_pretty', 'formation_energy_per_atom', 'energy_above_hull', 'band_gap', 'volume', 'nsites'])
+                        docs = mpr.materials.summary.search(formula=formula, fields=['formation_energy_per_atom', 'energy_above_hull', 'band_gap', 'volume', 'nsites'])
 
                     if docs:
                         props, source, resolved_formula = process_docs(docs)
@@ -143,7 +140,6 @@ class MaterialMappingEngine:
 
         if props is None and self.session and (source_override == "OQMD" or source_override is None):
             try:
-                # OQMD ensemble sampling (simplified as fields differ)
                 params = {"composition": formula, "limit": 5, "fields": "composition,delta_e,stability,band_gap,volume,natoms"}
                 r = self.session.get(OQMD_URL, params=params, timeout=10)
                 if r.status_code == 200:
@@ -194,15 +190,10 @@ class MaterialMappingEngine:
         if not all(k in bases for k in ["cathode", "salt", "interface"]):
             return system, {}
 
-        # 4. Resolve Cathode Dopants with proper chemistry modeling
+        # 4. Resolve Cathode Dopants with proper normalized site fraction
         for d in DOPANTS:
-            # Charge-balanced dopant search
-            # Try a range of x in [0.05, 0.15]
             for x in [0.05, 0.1, 0.15]:
                 formula = generate_doped_formula(d, x)
-                # Oxidation state bookkeeping (placeholder for early rejection)
-                # In full implementation, we'd use pymatgen to validate oxidation states
-
                 chemsys = f"Na-Fe-{d}-P-O"
                 p, src, rf = self._resolve_material(formula=formula, chemsys=chemsys)
                 if p:
