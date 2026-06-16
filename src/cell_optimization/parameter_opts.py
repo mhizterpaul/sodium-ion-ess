@@ -30,6 +30,7 @@ DESIGN_BOUNDS = [
 # --- PHYSICS MODELS ---
 
 def carbon_percolation_conductivity(fraction: float, base_cond: float = 100.0) -> float:
+    # Percolation theory: sigma_eff = sigma_0 * max((phi - 0.03)/(1 - 0.03), 0.01)^1.8
     phi_c = 0.03
     if fraction <= phi_c: return 1e-6
     return base_cond * np.power(max((fraction - phi_c) / (1.0 - phi_c), 0.01), 1.8)
@@ -61,6 +62,7 @@ class ParamTransform:
             if "initial_sodium_loss_delta" in d:
                 self.values_dict["Initial concentration in negative electrode [mol.m-3]"] *= (1.0 + d["initial_sodium_loss_delta"])
             if "stability_shift" in d:
+                 # Stability shift reduces degradation rates via exp(-dS) scaling
                  self._apply_scaling("SEI reaction exchange current density [A.m-2]", np.exp(-d["stability_shift"]))
                  self._apply_scaling("Positive electrode LAM constant proportional term [s-1]", np.exp(-d["stability_shift"]))
 
@@ -213,10 +215,11 @@ def run_workflow():
         final_metrics = optimizer.simulate(pt.get_parameter_values())
 
         if final_metrics["success"]:
+            # Score is based on total energy density for physical grounding
             material_results.append({
                 "cat": cat, "salt": salt, "func": func,
                 "x": final_x, "metrics": final_metrics, "deltas": deltas,
-                "score": final_metrics["energy"] + final_metrics["power"] * 0.1 + final_metrics["mechanical_stability"] * 0.01
+                "score": final_metrics["energy"]
             })
 
     if not material_results:
