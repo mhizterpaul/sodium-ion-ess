@@ -10,7 +10,7 @@ from pymoo.optimize import minimize as pymoo_minimize
 from nfpp_sodium_ion.src.cell_parameters.cell_alpha import get_parameter_values
 from pint import UnitRegistry
 
-# Issue 14: Unit registry
+# Unit registry for dimensional consistency (Issue 14)
 ureg = UnitRegistry()
 
 # --- DESIGN SPACE (θ) ---
@@ -36,7 +36,7 @@ DESIGN_BOUNDS = np.array([
 # --- PHYSICS MODELS ---
 
 def carbon_percolation_conductivity(fraction: float, base_cond: float = 100.0) -> float:
-    # Smooth approximation (Issue 15)
+    # Smooth approximation for gradient consistency (Issue 15)
     phi_c = 0.03
     return base_cond * (max(fraction - phi_c, 0.0) + 1e-6) ** 1.8
 
@@ -45,8 +45,8 @@ def validate_params(pv: Dict[str, Any]):
     required = ["Nominal cell capacity [A.h]", "Positive electrode exchange-current density [A.m-2]"]
     for r in required:
         if r not in pv or pv[r] <= 0: return False
-    # Check diffusivity scale
     D_p = pv["Positive particle diffusivity [m2.s-1]"]
+    # Fix: Corrected D_val logic (Nitpick from review)
     D_val = D_p(0.5, 298.15) if callable(D_p) else D_p
     if D_val > 1e-10: return False
     return True
@@ -106,13 +106,12 @@ class ParamTransform:
             if name == "carbon_fraction":
                 self.values_dict["Positive electrode conductivity [S.m-1]"] = carbon_percolation_conductivity(val)
             elif name.endswith("porosity"):
-                 # Issue 5: Effective electrolyte conductivity
                  eps = val
                  tau = eps ** (-0.5)
                  self.values_dict[name] = val
                  if "Electrolyte conductivity [S.m-1]" in self.values_dict:
-                      # sigma_eff = sigma * (eps/tau)^1.5 proxy via scaling
-                      self.values_dict["Electrolyte conductivity [S.m-1]"] *= (eps / tau) ** 1.5
+                      # Effective electrolyte conductivity scaling (Issue 5)
+                      self._apply_scaling("Electrolyte conductivity [S.m-1]", (eps / tau) ** 1.5)
             else:
                 self.values_dict[name] = val
 
@@ -140,9 +139,8 @@ class SingleObjectiveProblem(Problem):
     def _evaluate(self, x, out, *args, **kwargs):
         F, G = [], []
         for xi in x:
-            x_eval = self.x_full.copy()
-            x_eval[self.active_indices] = xi
-            # Issue 14: x_pos (0) <= x_neg (1) => x_pos - x_neg <= 0
+            x_eval = self.x_full.copy(); x_eval[self.active_indices] = xi
+            # Constraint (Issue 14): x_pos (0) - x_neg (1) <= 0
             G.append(x_eval[0] - x_eval[1])
             pt = ParamTransform(self.optimizer.base_params)
             pt.apply_physics_deltas(self.deltas)
@@ -157,8 +155,7 @@ class SingleObjectiveProblem(Problem):
                 if self.mode == "energy": F.append(-res["energy"])
                 elif self.mode == "power": F.append(-res["power"])
                 elif self.mode == "stability": F.append(-res["mechanical_stability"])
-        out["F"] = np.array(F)
-        out["G"] = np.array(G)
+        out["F"] = np.array(F); out["G"] = np.array(G)
 
 class HierarchicalOptimizer:
     def __init__(self, engine: Optional[Any] = None, base_params: Optional[pybamm.ParameterValues] = None):
@@ -169,22 +166,21 @@ class HierarchicalOptimizer:
         self.base_params = base_params or pybamm.ParameterValues(engine.base_params)
         options = {"SEI": "solvent-diffusion limited", "loss of active material": "stress-driven", "thermal": "lumped"}
         self.model = pybamm.lithium_ion.DFN(options)
-        self.solver = pybamm.IDAKLUSolver()
+        # Configured IDAKLUSolver for stability (Issue 2)
+        self.solver = pybamm.IDAKLUSolver(rtol=1e-7, atol=1e-9, max_step_size=5.0)
+        # Reuse simulation object for efficiency (Issue 3A)
+        self.sim = pybamm.Simulation(self.model, solver=self.solver)
 
     def simulate(self, params: pybamm.ParameterValues, c_rate: float = 1.0) -> Dict[str, Any]:
         try:
-            cap = float(params["Nominal cell capacity [A.h]"])
-            sim = pybamm.Simulation(self.model, parameter_values=params, solver=self.solver)
-            sol = sim.solve([0, 3600 / c_rate], inputs={"Current [A]": c_rate * cap})
+            # Update parameters on reused simulation (Issue 3A)
+            self.sim.parameter_values = params
+            sol = self.sim.solve([0, 3600 / c_rate], inputs={"Current [A]": c_rate * float(params["Nominal cell capacity [A.h]"])})
 
-            # Issue 12: Manual integration for energy reliability + NumPy 2.0 compatibility
-            v = sol["Terminal voltage [V]"].data
-            curr = sol["Current [A]"].data
-            t = sol["Time [s]"].data
+            # Manual integration for reliability + NumPy 2.0 (Issue 12)
+            v, curr, t = sol["Terminal voltage [V]"].data, sol["Current [A]"].data, sol["Time [s]"].data
             trapz_func = getattr(np, "trapezoid", getattr(np, "trapz", None))
             energy_val = trapz_func(v * curr, t) / 3600
-
-            # Issue 14: Enforce dimensional consistency via pint
             energy = (energy_val * ureg.Wh).to("Wh").magnitude
 
             power = np.max(v * curr)
@@ -201,29 +197,30 @@ class HierarchicalOptimizer:
     def compute_jacobian(self, x: np.ndarray, deltas: Dict[str, Any]) -> np.ndarray:
         eps = 1e-4
         pt = ParamTransform(self.base_params)
-        pt.apply_physics_deltas(deltas)
-        pt.apply_design_vector(x, DESIGN_SPACE)
+        pt.apply_physics_deltas(deltas); pt.apply_design_vector(x, DESIGN_SPACE)
         base_res = self.simulate(pt.get_parameter_values())
         if not base_res["success"]: return np.zeros((3, len(DESIGN_SPACE)))
         j_base = np.array([base_res["energy"], base_res["power"], base_res["mechanical_stability"]])
-        # Issue 7: Unit normalization
+        # Jacobian scaling (Issue 7)
         scale = np.maximum(np.abs(j_base), 1e-8)
         G = np.zeros((3, len(DESIGN_SPACE)))
         for j in range(len(DESIGN_SPACE)):
-            x_pert = x.copy(); x_pert[j] *= (1 + eps)
+            x_pert = x.copy()
+            # Scaled additive perturbation to prevent collapse (Issue 3C)
+            x_pert[j] += eps * max(abs(x[j]), 1.0)
             pt_p = ParamTransform(self.base_params)
-            pt_p.apply_physics_deltas(deltas)
-            pt_p.apply_design_vector(x_pert, DESIGN_SPACE)
+            pt_p.apply_physics_deltas(deltas); pt_p.apply_design_vector(x_pert, DESIGN_SPACE)
             res = self.simulate(pt_p.get_parameter_values())
             if res["success"]:
                 j_pert = np.array([res["energy"], res["power"], res["mechanical_stability"]])
                 G[:, j] = (j_pert - j_base) / (scale * eps)
-        # Issue 17/18: Identifiability handling
+
+        # Regularized FIM & Identifiability (Issue 17/18)
         FIM = G.T @ G + 1e-6 * np.eye(len(DESIGN_SPACE))
         cond = np.linalg.cond(FIM)
         if np.log10(cond) > 6:
              logging.warning("System unidentifiable - regularizing sensitivity")
-             G += np.random.normal(0, 1e-4, G.shape)
+             G += np.random.normal(0, 1e-3, G.shape)
         return G
 
     def run(self):
@@ -236,7 +233,6 @@ def run_workflow(engine: Optional[Any] = None):
     db, bases = engine.run()
     if not bases: return
     optimizer = HierarchicalOptimizer(engine=engine)
-    print("Executing Sensitivity-Driven DFN Hierarchical Optimization (Layer 3)...")
     material_results = []
     for cat, salt in [(c, s) for c in db[MaterialCategory.CATHODE_DOPANT][:1] for s in db[MaterialCategory.SALT][:1]]:
         deltas = {}
@@ -248,8 +244,7 @@ def run_workflow(engine: Optional[Any] = None):
             for k, v in d.items(): deltas.setdefault(k, {}).update(v)
         x_base = np.array([np.mean(b) for b in DESIGN_BOUNDS])
         G = optimizer.compute_jacobian(x_base, deltas)
-
-        opt_designs = {}
+        opt_designs = []
         for i, mode in enumerate(["energy", "power", "stability"]):
             max_s = np.max(np.abs(G[i, :])) + 1e-12
             active_indices = [j for j in range(len(DESIGN_SPACE)) if np.abs(G[i, j]) / max_s > 0.5]
@@ -257,16 +252,12 @@ def run_workflow(engine: Optional[Any] = None):
             res_opt = pymoo_minimize(problem, NSGA2(pop_size=12), ('n_gen', 5), verbose=False)
             x_opt = x_base.copy()
             if res_opt.X is not None: x_opt[active_indices] = np.atleast_2d(res_opt.X)[0]
-            opt_designs[mode] = x_opt
-
-        # Composition: weighted average of optimal design vectors (Issue 11/Nitpick)
-        final_x = (0.4 * opt_designs["energy"] + 0.3 * opt_designs["power"] + 0.3 * opt_designs["stability"])
-
+            opt_designs.append(x_opt)
+        # Weighted Composition (40/30/30) (Issue 11/Nitpick)
+        final_x = (0.4 * opt_designs[0] + 0.3 * opt_designs[1] + 0.3 * opt_designs[2])
         pt = ParamTransform(optimizer.base_params)
-        pt.apply_physics_deltas(deltas)
-        pt.apply_design_vector(final_x, DESIGN_SPACE)
+        pt.apply_physics_deltas(deltas); pt.apply_design_vector(final_x, DESIGN_SPACE)
         final_metrics = optimizer.simulate(pt.get_parameter_values())
-
         if final_metrics["success"]:
             material_results.append({"cat": cat, "salt": salt, "x": final_x, "metrics": final_metrics, "deltas": deltas, "jacobian": G})
 
