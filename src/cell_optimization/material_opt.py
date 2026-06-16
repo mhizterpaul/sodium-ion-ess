@@ -57,8 +57,8 @@ class MaterialCandidate:
 class MaterialMappingEngine:
     def __init__(self):
         logging.basicConfig(level=logging.INFO)
-        # Use provided MP Key
-        self.mp_key = os.environ.get("MP_API_KEY", "JkablwdTl5nO4UUa5iwcjOvMKLq10BWl")
+        # MP API Key must be configured via environment variable
+        self.mp_key = os.environ.get("MP_API_KEY")
         self.cache_version = self._generate_cache_version()
         self.cache = self._load_cache()
         self.session = self._setup_session() if requests else None

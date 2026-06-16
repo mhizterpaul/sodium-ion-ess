@@ -8,7 +8,7 @@ from typing import Dict, Any, List, Tuple
 from nfpp_sodium_ion.src.cell_parameters.cell_alpha import get_parameter_values
 from src.cell_optimization.material_opt import MaterialMappingEngine, MaterialCategory, MaterialCandidate
 from src.cell_optimization.chem_regularization import derive_coupled_deltas, regularize_salt_props, regularize_functionalization
-from src.cell_optimization.parameter_opts import ParamTransform, DSMOptimizer, DESIGN_SPACE
+from src.cell_optimization.parameter_opts import ParamTransform, HierarchicalOptimizer, DESIGN_SPACE
 
 try:
     import dolfinx

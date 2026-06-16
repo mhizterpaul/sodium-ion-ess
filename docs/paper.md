@@ -78,7 +78,7 @@ This defines the deformation endurance boundary of the continuum under coupled e
 
 ### DFN-Based NFPP Cell Optimization Framework
 Methodological Scope Statement
-This work presents a multiphysics optimization framework for NFPP-based sodium-ion cells, where material variation is restricted to dopant-level and electrolyte (salt/solvent) chemistry, coupled with structural and thermal co-optimization via Differentiable Sensitivity Manifold Optimization (DSMO).
+This work presents a multiphysics optimization framework for NFPP-based sodium-ion cells, where material variation is restricted to dopant-level and electrolyte (salt/solvent) chemistry, coupled with structural and thermal co-optimization.
 
 Objective Definition
 The cell design is optimized using a hierarchical Material-Structural framework. The primary objective is to discover chemistry modifications (dopants/salts/solvents) compatible with the already-validated NFPP architecture while simultaneously fine-tuning structural parameters. Cost reduction and performance gains are driven by **material production optimization**, focusing on purification, extraction, and supply-chain criticality.
@@ -92,7 +92,7 @@ This phase resolves performance properties for chemistry modifications using a d
 *   **Decoupled Mapping Engine:** The framework implements a prioritized resolution flow (OQMD Exact $\rightarrow$ MP Exact $\rightarrow$ Class Baselines) for a fixed candidate space (Mn/Cr/Ni dopants, NaBOB/NaTCP salts, MTMS functionalization). Strict stability-sorting ensures ground-state accuracy.
 *   **Physics Channel Models:** Performance deltas are derived through channel-specific physics models: Nernstian proxies for voltage shifts ($ΔV \propto -ΔE_f$), exponential thermal activation mapping for conductivity ($\sigma \propto \exp(-E_g/2kT)$), and interphase kinetic models for SEI growth, all scaled by a bounded stability realization factor.
 *   **Electrolyte & Fluorine Reduction:** Selection of non-fluorinated salts to reduce environmental burden and cost. Primary candidates include **NaBOB** (Sodium bis(oxalato)borate) for stability and **NaTCP** (Sodium tricyanomethanide) for high performance.
-*   **Electrode Doping:** Fe-site doping for cathodes using **Cr** (Cr³⁺ stabilizer), **Mn** (voltage booster), and **Ni** is evaluated via sensitivity-based manifold optimization.
+*   **Electrode Doping:** Fe-site doping for cathodes using **Cr** (Cr³⁺ stabilizer), **Mn** (voltage booster), and **Ni** is evaluated via sensitivity-based optimization.
 *   **Alkyl Silane Functionalization:** Implementation of hard carbon electrode functionalization using **methyltrimethoxysilane (MTMS)**. This process replaces surface –OH groups with –Si–O–R groups on the hard carbon electrode, increasing hydrophobicity and promoting a more uniform SEI layer. The model accounts for reduced SEI kinetics (slower growth and lower irreversible capacity fade), slower interfacial resistance growth over cycles, and optimized exchange current density resulting from improved surface wetting and local ion accessibility.
 
 2. Stage D: Electrochemical Projection Layer
@@ -103,11 +103,11 @@ This ensures DFN simulation validity by maintaining compatibility with the calib
 3. Stage E-F: Multi-Objective Optimization & Objective-Specific Sensitivity Analysis
 The projected design space ($\theta = [\theta_s, \theta_m]$) is optimized as a multi-objective problem using the coupled multiphysics operator $y = F(\theta) = [E(\theta), P(\theta), M(\theta)]^T$, where the three objectives are: maximize energy capacity $E(\theta)$, maximize power capability $P(\theta)$, and maximize mechanical stability $M(\theta)$ (minimize damage).
 
-The framework employs the following four-phase approach:
-*   **Phase 1: Multi-Objective Search (NSGA-II):** For each material combination (dopant–salt pairing), Non-dominated Sorting Genetic Algorithm II (NSGA-II) is applied to the three-objective space. The algorithm simultaneously explores design configurations that optimize energy, power, and mechanical stability, generating a Pareto-optimal front for each material pairing.
-*   **Phase 2: Objective-Specific Sensitivity Analysis:** For each Pareto point, the sensitivity of each objective function to design parameters is computed via numerical Jacobian differentiation: $G_{ij} = \partial y_i / \partial \theta_j$. This yields a $3 \times 8$ sensitivity matrix capturing how energy, power, and mechanical stability each respond to structural and material design variables.
-*   **Phase 3: Cross-Pareto Aggregation & Normalization:** Sensitivities are aggregated (averaged) over all Pareto-optimal designs across all material combinations. Row-wise normalization produces the sensitivity manifold $S_{ij}$, where each objective is independently normalized: $S_{ij} = G_{ij} / \max_k(G_{ik})$. This reveals which parameters drive each specific objective.
-*   **Phase 4: Pareto Filtering & Knee-Point Selection:** Non-dominated solutions from all material combinations are aggregated. A single robust knee-point design is identified as the configuration closest to the ideal point in the normalized objective space, balancing all three competing objectives. This design is reported alongside objective-specific parameter groupings (parameters with $S_{ij} > 0.5$ for objective $i$ are identified as primary drivers for that objective).
+The design space ($\theta = [\theta_s, \theta_m]$) is optimized using a hierarchical approach where each objective is individually optimized and then composed:
+*   **Phase 1: Individual Objective Optimization:** For each material combination (dopant–salt pairing), three independent single-objective optimizations are performed to maximize energy capacity, power capability, and mechanical stability using gradient-based local search.
+*   **Phase 2: Design Vector Composition:** The resulting optimal design vectors from each independent search are composed into a single representative design through a weighted averaging process ($40\%$ energy, $30\%$ power, $30\%$ stability), ensuring a balanced multi-physics response.
+*   **Phase 3: Performance Validation:** Each composed design is simulated to verify its effectiveness across the entire objective space.
+*   **Phase 4: Candidate Ranking:** Material combinations are ranked based on their composed performance metrics to identify the globally optimal cell configuration.
 
 The selected configuration is validated through a coupled multiphysics framework in PyBaMM, assessing the electrochemical and thermal response under representative operating profiles. While this work focuses on a foundational design space, the cell architecture remains amenable to further performance enhancement via composite electrode structuring, advanced pore network engineering, perturbing other dopant sites (beyond the Fe-site) and exploring a broader range of electrolyte systems (solvents and additives) to further enhance cycle life and energy density. The current optimization scope is intentionally streamlined to accommodate the computational constraints of the DFN solver while effectively demonstrating the viability of physics-based optimization for enhancing the cost-efficiency and performance of sodium-ion energy storage systems.
 Computed cell-level performance metrics include:  Energy capacity (kWh), Nominal voltage (V), Continuous current (A), Peak current (A), Charge time (h or min under rated C-rate), Power capability (kW or C-rate equivalent), Cycle life (cycles to end-of-life under defined SOH threshold) 
@@ -147,7 +147,7 @@ The interface layer regulates bidirectional energy flow and grid stability.
 1.5 ESS Unit Physical Dimensions
 The integrated ESS unit, housing the 16S1P pack and the power conversion system, is designed with the following external dimensions:
 *   **Height:** 450 mm (includes cell stack, air draft spacing, and top-mounted PCCS).
-*   **Length:** 180 mm (aligned with 130 mm cell length plus manifold clearances).
+*   **Length:** 180 mm (aligned with 130 mm cell length plus internal clearances).
 *   **Width:** 140 mm (aligned with 70 mm cell width plus enclosure thickness).
 
 2. Model-Based Battery Management System Design (Core Research Contribution)

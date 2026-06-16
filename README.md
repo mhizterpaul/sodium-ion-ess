@@ -19,17 +19,17 @@ The primary research focus is the design and validation of a model-based Battery
 *   **Safety Enforcement**: Multi-objective current arbitration with thermal and SOC-boundary derating.
 *   **Control & Balancing**: Deterministic state machine, adaptive SOH-aware cell equalization, and adaptive Model Predictive Control (MPC) for operational regulation.
 
-### 3. Hierarchical Optimization (DSMO)
+### 3. Hierarchical Optimization
 A multi-stage framework for cell design enhancement:
 *   **Layered Material Mapping**: A decoupled architecture for eco-friendly, **non-fluorinated salts** (NaTCP, NaBOB), cathode dopants (**Cr**, **Mn**, **Ni**), and electrode functionalization (**MTMS**). Thermodynamic/electronic states are resolved from OQMD/MP APIs and transformed into PyBaMM parameters via dedicated physics channels (Nernstian proxies, exponential conductivity mapping).
-*   **Parameter Optimization**: Differentiable Sensitivity Manifold Optimization (DSMO) fine-tuning a coupled design space:
+*   **Parameter Optimization**: Hierarchical individual objective optimization and composition:
     - **Structural ($\theta_s$):** Thickness, porosity, tortuosity, loading, and particle size.
     - **Material ($\theta_m$):** NFPP/carbon fractions and electrolyte composition.
-    - **Engine:** PyBaMM/CasADi symbolic sensitivities and FEniCSx mechanical adjoints.
+    - **Method:** Independent single-objective searches followed by weighted vector composition.
 
 ## Repository Structure
 
-- `src/cell_optimization/`: Material discovery engines and structural DSMO scripts.
+- `src/cell_optimization/`: Material discovery engines and structural optimization scripts.
 - `src/bms_design/`: BMS ECU logic (`ecu.m`), Simscape digital twin components (`.ssc`), and validation scripts.
 - `nfpp_sodium_ion/`: Registered PyBaMM parameter set for NFPP/Hard-Carbon chemistry.
 - `src/report.ipynb`: Orchestration notebook for the complete research pipeline.
