@@ -4,7 +4,9 @@ import logging
 import json
 import os
 from typing import Dict, Any, List, Tuple, Optional
-from scipy.optimize import minimize
+from pymoo.core.problem import Problem
+from pymoo.algorithms.moo.nsga2 import NSGA2
+from pymoo.optimize import minimize as pymoo_minimize
 from nfpp_sodium_ion.src.cell_parameters.cell_alpha import get_parameter_values
 
 # --- DESIGN SPACE (θ) ---
@@ -19,13 +21,13 @@ DESIGN_SPACE = [
     "carbon_fraction"
 ]
 
-DESIGN_BOUNDS = [
-    (30e-6, 150e-6), (30e-6, 150e-6),
-    (0.2, 0.5), (0.2, 0.5),
-    (1e-7, 10e-6), (1e-7, 10e-6),
-    (0.3, 0.7),
-    (0.02, 0.15)
-]
+DESIGN_BOUNDS = np.array([
+    [30e-6, 150e-6], [30e-6, 150e-6],
+    [0.2, 0.5], [0.2, 0.5],
+    [1e-7, 10e-6], [1e-7, 10e-6],
+    [0.3, 0.7],
+    [0.02, 0.15]
+])
 
 # --- PHYSICS MODELS ---
 
@@ -106,7 +108,35 @@ class ParamTransform:
             self.values_dict["Bulk solvent concentration [mol.m-3]"] = 2636.0
         return pybamm.ParameterValues(self.values_dict)
 
-# --- INDIVIDUAL OBJECTIVE OPTIMIZER ---
+# --- INDIVIDUAL OBJECTIVE OPTIMIZER (NSGA-II) ---
+
+class SingleObjectiveProblem(Problem):
+    def __init__(self, optimizer, x_full, active_indices, deltas, mode):
+        xl = DESIGN_BOUNDS[active_indices, 0]
+        xu = DESIGN_BOUNDS[active_indices, 1]
+        super().__init__(n_var=len(active_indices), n_obj=1, n_constr=0, xl=xl, xu=xu)
+        self.optimizer = optimizer
+        self.x_full = x_full
+        self.active_indices = active_indices
+        self.deltas = deltas
+        self.mode = mode
+
+    def _evaluate(self, x, out, *args, **kwargs):
+        F = []
+        for xi in x:
+            x_eval = self.x_full.copy()
+            x_eval[self.active_indices] = xi
+            pt = ParamTransform(self.optimizer.base_params)
+            pt.apply_physics_deltas(self.deltas)
+            pt.apply_design_vector(x_eval, DESIGN_SPACE)
+            res = self.optimizer.simulate(pt.get_parameter_values())
+            if not res["success"]:
+                F.append(1e9)
+            else:
+                if self.mode == "energy": F.append(-res["energy"])
+                elif self.mode == "power": F.append(-res["power"])
+                elif self.mode == "stability": F.append(-res["mechanical_stability"])
+        out["F"] = np.array(F)
 
 class HierarchicalOptimizer:
     def __init__(self, engine: Optional[Any] = None, base_params: Optional[pybamm.ParameterValues] = None):
@@ -179,19 +209,6 @@ class HierarchicalOptimizer:
                 G[:, j] = (j_pert - j_base) / (np.abs(j_base) * eps + 1e-12)
         return G
 
-    def _objective(self, x_active, x_full, active_indices, deltas, mode):
-        x = x_full.copy()
-        x[active_indices] = x_active
-        pt = ParamTransform(self.base_params)
-        pt.apply_physics_deltas(deltas)
-        pt.apply_design_vector(x, DESIGN_SPACE)
-        res = self.simulate(pt.get_parameter_values())
-        if not res["success"]: return 1e9
-        if mode == "energy": return -res["energy"]
-        if mode == "power": return -res["power"]
-        if mode == "stability": return -res["mechanical_stability"]
-        return 1e9
-
     def run(self):
         return run_workflow(engine=self.engine)
 
@@ -206,7 +223,7 @@ def run_workflow(engine: Optional[Any] = None):
     if not bases: return
     optimizer = HierarchicalOptimizer(engine=engine, base_params=pybamm.ParameterValues(engine.base_params))
 
-    print("Executing Sensitivity-Driven Hierarchical Optimization (Layer 3)...")
+    print("Executing Sensitivity-Driven Hierarchical Optimization with NSGA-II (Layer 3)...")
     print("Each objective function is individually optimized using its primary drivers.")
 
     cathodes = db[MaterialCategory.CATHODE_DOPANT] if db[MaterialCategory.CATHODE_DOPANT] else [None]
@@ -226,7 +243,7 @@ def run_workflow(engine: Optional[Any] = None):
 
         x_base = np.array([np.mean(b) for b in DESIGN_BOUNDS])
 
-        # 1. Sensitivity Analysis (Existing Technique)
+        # 1. Sensitivity Analysis (Jacobian differentiation)
         G = optimizer.compute_jacobian(x_base, deltas)
         G_abs = np.abs(G)
 
@@ -242,18 +259,14 @@ def run_workflow(engine: Optional[Any] = None):
 
             print(f"  Primary Drivers for {obj_names[i]}: {[DESIGN_SPACE[j] for j in active_indices]}")
 
-            # 2. Optimization using identified parameters
-            x0_active = x_base[active_indices]
-            bounds_active = [DESIGN_BOUNDS[j] for j in active_indices]
-
-            res = minimize(
-                optimizer._objective, x0_active,
-                args=(x_base, active_indices, deltas, mode),
-                bounds=bounds_active, method='L-BFGS-B', options={'maxiter': 10}
-            )
+            # 2. Optimization using NSGA-II on identified parameters
+            problem = SingleObjectiveProblem(optimizer, x_base, active_indices, deltas, mode)
+            algorithm = NSGA2(pop_size=20)
+            res_opt = pymoo_minimize(problem, algorithm, ('n_gen', 10), verbose=False)
 
             x_opt = x_base.copy()
-            x_opt[active_indices] = res.x
+            if res_opt.X is not None:
+                x_opt[active_indices] = np.atleast_2d(res_opt.X)[0]
             opt_designs[mode] = x_opt
 
         # 3. Composition: weighted average of optimal design vectors
@@ -299,7 +312,6 @@ def run_workflow(engine: Optional[Any] = None):
             "electrolyte": {"salt": best["salt"].name if best["salt"] else "Base"}
         },
         "performance_envelope": {
-             # Range metadata from individual objectives if needed, here providing composing result metrics
             "energy_Wh": round(best["metrics"]["energy"], 4),
             "power_W": round(best["metrics"]["power"], 4),
             "stability_Pa": round(best["metrics"]["mechanical_stability"], 4)
