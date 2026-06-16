@@ -156,7 +156,7 @@ class HierarchicalOptimizer:
         except Exception as e:
             return {"success": False, "reason": f"{e}"}
 
-    def compute_sensitivity(self, x: np.ndarray, deltas: Dict[str, Any]) -> np.ndarray:
+    def compute_jacobian(self, x: np.ndarray, deltas: Dict[str, Any]) -> np.ndarray:
         eps = 1e-4
         pt = ParamTransform(self.base_params)
         pt.apply_physics_deltas(deltas)
@@ -226,8 +226,8 @@ def run_workflow(engine: Optional[Any] = None):
 
         x_base = np.array([np.mean(b) for b in DESIGN_BOUNDS])
 
-        # 1. Sensitivity Analysis
-        G = optimizer.compute_sensitivity(x_base, deltas)
+        # 1. Sensitivity Analysis (Existing Technique)
+        G = optimizer.compute_jacobian(x_base, deltas)
         G_abs = np.abs(G)
 
         opt_designs = {}
@@ -268,7 +268,8 @@ def run_workflow(engine: Optional[Any] = None):
             material_results.append({
                 "cat": cat, "salt": salt,
                 "x": final_x, "metrics": final_metrics, "deltas": deltas,
-                "score": final_metrics["energy"]
+                "score": final_metrics["energy"],
+                "jacobian": G
             })
 
     if not material_results:
@@ -277,15 +278,38 @@ def run_workflow(engine: Optional[Any] = None):
 
     best = max(material_results, key=lambda r: r["score"])
 
+    # Compute Metadata for identified drivers
+    G_avg = best["jacobian"]
+    G_row_max = np.max(np.abs(G_avg), axis=1).reshape(-1, 1) + 1e-12
+    S = np.abs(G_avg) / G_row_max
+
+    groups = {"Energy": [], "Power": [], "Stability": [], "Coupled": []}
+    obj_names = ["Energy", "Power", "Stability"]
+    for j, name in enumerate(DESIGN_SPACE):
+        member_of = []
+        for i, obj in enumerate(obj_names):
+            if S[i, j] > 0.5:
+                groups[obj].append(name)
+                member_of.append(obj)
+        if len(member_of) > 1: groups["Coupled"].append(name)
+
     output = {
         "materials": {
             "cathode": {"name": best["cat"].name if best["cat"] else "Base", "formula": best["cat"].composition if best["cat"] else "Base"},
             "electrolyte": {"salt": best["salt"].name if best["salt"] else "Base"}
         },
+        "performance_envelope": {
+             # Range metadata from individual objectives if needed, here providing composing result metrics
+            "energy_Wh": round(best["metrics"]["energy"], 4),
+            "power_W": round(best["metrics"]["power"], 4),
+            "stability_Pa": round(best["metrics"]["mechanical_stability"], 4)
+        },
         "knee_point_design": {
             "metrics": {k: round(float(v), 4) for k, v in best["metrics"].items() if k != "success"},
             "metadata": {"rank": 1}
         },
+        "parameter_grouping": groups,
+        "sensitivity_matrix": G_avg.tolist(),
         "design_specs_representative": dict(zip(DESIGN_SPACE, best["x"].tolist())),
         "combined_deltas_representative": best["deltas"]
     }
