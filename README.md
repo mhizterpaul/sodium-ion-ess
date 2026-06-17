@@ -25,7 +25,7 @@ A multi-stage framework for cell design enhancement:
 *   **Parameter Optimization**: Hierarchical individual objective optimization and composition:
     - **Structural ($\theta_s$):** Thickness, porosity, tortuosity, loading, and particle size.
     - **Material ($\theta_m$):** NFPP/carbon fractions and electrolyte composition.
-    - **Method:** Independent single-objective searches followed by weighted vector composition.
+    - **Method:** Independent single-objective searches followed by PDE-stable design selection and local interpolation.
 
 ## Repository Structure
 

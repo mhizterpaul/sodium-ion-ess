@@ -105,7 +105,7 @@ The projected design space ($\theta = [\theta_s, \theta_m]$) is optimized as a m
 
 The design space ($\theta = [\theta_s, \theta_m]$) is optimized using a hierarchical approach where each objective is individually optimized and then composed:
 *   **Phase 1: Individual Objective Optimization:** For each material combination (dopant–salt pairing), three independent single-objective optimizations are performed to maximize energy capacity, power capability, and mechanical stability using gradient-based local search.
-*   **Phase 2: Design Vector Composition:** The resulting optimal design vectors from each independent search are composed into a single representative design through a weighted averaging process ($40\%$ energy, $30\%$ power, $30\%$ stability), ensuring a balanced multi-physics response.
+*   **Phase 2: Design Selection & Interpolation:** The resulting optimal design vectors from each independent search are evaluated against a PDE-based stability gate. A representative design $x^*$ is selected to maximize the stability score $\mathcal{S}(x)$, followed by a local interpolation refinement ($x_{final} = 0.8 \cdot x^* + 0.2 \cdot \text{mean}(X_{stable})$) to ensure a balanced and robust multi-physics response.
 *   **Phase 3: Performance Validation:** Each composed design is simulated to verify its effectiveness across the entire objective space.
 *   **Phase 4: Candidate Ranking:** Material combinations are ranked based on their composed performance metrics to identify the globally optimal cell configuration.
 

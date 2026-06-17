@@ -139,7 +139,7 @@ class SingleObjectiveProblem(Problem):
         F, G = [], []
         for xi in x:
             x_eval = self.x_full.copy(); x_eval[self.active_indices] = xi
-            # Constraint (Issue 14): x_pos (0) - x_neg (1) <= 0
+            # Issue 14: x_pos (0) - x_neg (1) <= 0
             G.append(x_eval[0] - x_eval[1])
             pt = ParamTransform(self.optimizer.base_params)
             pt.apply_physics_deltas(self.deltas)
@@ -217,7 +217,7 @@ class HierarchicalOptimizer:
         base_res = self.simulate(pt.get_parameter_values())
         if not base_res["success"]: return np.zeros((3, len(DESIGN_SPACE)))
         j_base = np.array([base_res["energy"], base_res["power"], base_res["mechanical_stability"]])
-        # Jacobian scaling (Issue 7)
+        # Issue 7: Unit normalization
         scale = np.maximum(np.abs(j_base), 1e-8)
         G = np.zeros((3, len(DESIGN_SPACE)))
         for j in range(len(DESIGN_SPACE)):
@@ -286,8 +286,11 @@ def run_workflow(engine: Optional[Any] = None):
 
         if not valid_candidates: continue
 
-        # Composition ONLY over stable manifold (Selection per best stability score)
-        final_x = valid_candidates[np.argmax(stability_scores)]
+        # Selection per max stability score (Issue 7 REQUIRED FIX - Step 4)
+        x_star = valid_candidates[np.argmax(stability_scores)]
+        # Refine via local interpolation (Issue 7 - Step 4)
+        final_x = 0.8 * x_star + 0.2 * np.mean(valid_candidates, axis=0)
+
         pt = ParamTransform(optimizer.base_params)
         pt.apply_physics_deltas(deltas); pt.apply_design_vector(final_x, DESIGN_SPACE)
         final_metrics = optimizer.simulate(pt.get_parameter_values())
@@ -296,11 +299,28 @@ def run_workflow(engine: Optional[Any] = None):
 
     if not material_results: return
     best = max(material_results, key=lambda r: r["metrics"]["energy"])
+
+    # Accurate metadata for identified drivers
+    G_avg = best["jacobian"]
+    G_row_max = np.max(np.abs(G_avg), axis=1).reshape(-1, 1) + 1e-12
+    S = np.abs(G_avg) / G_row_max
+
+    groups = {"Energy": [], "Power": [], "Stability": [], "Coupled": []}
+    obj_names = ["Energy", "Power", "Stability"]
+    for j, name in enumerate(DESIGN_SPACE):
+        member_of = []
+        for i, obj in enumerate(obj_names):
+            if S[i, j] > 0.5:
+                groups[obj].append(name)
+                member_of.append(obj)
+        if len(member_of) > 1: groups["Coupled"].append(name)
+
     output = {
         "materials": {"cathode": {"name": best["cat"].name, "formula": best["cat"].composition}, "electrolyte": {"salt": best["salt"].name}},
         "design_specs_representative": dict(zip(DESIGN_SPACE, best["x"].tolist())),
         "combined_deltas_representative": best["deltas"],
-        "sensitivity_matrix": best["jacobian"].tolist()
+        "sensitivity_matrix": best["jacobian"].tolist(),
+        "parameter_grouping": groups
     }
     with open("result.json", "w") as f: json.dump(output, f, indent=2)
     return output
