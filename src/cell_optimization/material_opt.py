@@ -9,6 +9,7 @@ from typing import List, Dict, Optional, Any, Tuple
 from dataclasses import dataclass
 from enum import Enum, auto
 from pymatgen.core import Composition, Element
+from pymatgen.core.periodic_table import Specie
 
 try:
     import requests
@@ -81,14 +82,30 @@ def generate_doped_formula(dopant, x):
         return f"Na{4.0-x*(DOPANT_CHARGES.get(dopant,2)-2):.2f}Fe{3.0*(1.0-x):.2f}{dopant}{3.0*x:.2f}P4O15"
 
 def ionic_radius_proxy(formula: str) -> float:
-    """Computes a weighted average ionic radius for the composition (Issue 4)."""
+    """Computes a weighted average ionic radius for the composition using Specie data."""
     try:
         comp = Composition(formula)
+        # Attempt to guess oxidation states for more accurate ionic radii
+        try:
+            guesses = comp.oxi_state_guesses()
+            states = guesses[0] if guesses else {}
+        except Exception:
+            states = {}
+
+        # Fallback common oxidation states for battery materials in this context
+        fallback_states = {"Na": 1, "O": -2, "P": 5, "Fe": 2, "Mn": 2, "Cr": 3, "Ni": 2, "C": 4, "Si": 4, "F": -1}
+
         total_atoms = sum(comp.values())
         avg_radius = 0.0
         for el, count in comp.items():
-             el_obj = Element(el)
-             radius = el_obj.average_ionic_radius or el_obj.atomic_radius or 1.0
+             symbol = el.symbol
+             oxi = states.get(symbol) or fallback_states.get(symbol, 0)
+             try:
+                 # Use Specie to get ionic radius
+                 specie = Specie(symbol, oxi)
+                 radius = specie.ionic_radius or specie.average_ionic_radius or el.atomic_radius or 1.0
+             except Exception:
+                 radius = el.average_ionic_radius or el.atomic_radius or 1.0
              avg_radius += (count / total_atoms) * radius
         return float(avg_radius)
     except Exception:
