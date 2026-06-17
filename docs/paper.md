@@ -81,7 +81,7 @@ Methodological Scope Statement
 This work presents a multiphysics optimization framework for NFPP-based sodium-ion cells, where material variation is restricted to dopant-level and electrolyte (salt/solvent) chemistry, coupled with structural and thermal co-optimization.
 
 Objective Definition
-The cell design is optimized using a hierarchical Material-Structural framework. The primary objective is to discover chemistry modifications (dopants/salts/solvents) compatible with the already-validated NFPP architecture while simultaneously fine-tuning structural parameters. Cost reduction and performance gains are driven by **material production optimization**, focusing on purification, extraction, and supply-chain criticality.
+The cell design is optimized using a hierarchical Material-Structural framework. The primary objective is to discover chemistry modifications (dopants/salts/solvents) compatible with the already-validated NFPP architecture while simultaneously fine-tuning structural parameters. Cost reduction and performance gains.
 
     **Design Space:**
 *   **Structural Parameters ($\theta_s$):** Electrode thickness ($L_c, L_a$), porosity ($\epsilon_c, \epsilon_a, \epsilon_{sep}$), tortuosity ($\tau$), active material loading and particle size ($r_p$).
@@ -96,20 +96,19 @@ This phase resolves performance properties for chemistry modifications using a d
 *   **Alkyl Silane Functionalization:** Implementation of hard carbon electrode functionalization using **methyltrimethoxysilane (MTMS)**. This process replaces surface –OH groups with –Si–O–R groups on the hard carbon electrode, increasing hydrophobicity and promoting a more uniform SEI layer. The model accounts for reduced SEI kinetics (slower growth and lower irreversible capacity fade), slower interfacial resistance growth over cycles, and optimized exchange current density resulting from improved surface wetting and local ion accessibility.
 
 2. Stage D: Electrochemical Projection Layer
-Selected material modifications are projected onto the validated DFN parameter set as perturbations:
-$\theta' = \theta_{base} (1 + \Delta \theta_{material})$
-This ensures DFN simulation validity by maintaining compatibility with the calibrated baseline.
+Selected material modifications are translated into DFN-compatible perturbations through a physics-based parameter update stage rather than a simple multiplicative rescaling. For each candidate material pair, the workflow computes thermodynamic, transport, kinetic, and structural deltas, and applies them to the baseline parameter set using the implementation's transform routine:
+$\theta' = \mathcal{T}(\theta_{base}, \Delta \theta_{material})$
+where $\mathcal{T}$ denotes the parameter-mapping step used to preserve consistency with the calibrated DFN model.
 
-3. Stage E-F: Multi-Objective Optimization & Objective-Specific Sensitivity Analysis
-The projected design space ($\theta = [\theta_s, \theta_m]$) is optimized as a multi-objective problem using the coupled multiphysics operator $y = F(\theta) = [E(\theta), P(\theta), M(\theta)]^T$, where the three objectives are: maximize energy capacity $E(\theta)$, maximize power capability $P(\theta)$, and maximize mechanical stability $M(\theta)$ (minimize damage).
+3. Stage E-F: Sensitivity-Driven Optimization & Validation
+The projected design space ($\theta = [\theta_s, \theta_m]$) is explored with a hierarchical, sensitivity-guided workflow that evaluates three scalar objectives—energy capacity, power capability, and mechanical stability—through DFN simulations.  it estimates the objective sensitivities with respect to the design variables and then performs three independent single-objective searches.
+*   **Phase 1: Sensitivity Screening:** For each material combination, the Jacobian of the objective responses is computed around the nominal design to identify the most influential parameters.
+*   **Phase 2: Objective-Specific Optimization:** Three independent optimizations are performed using a genetic algorithm (GA) to maximize energy, power, and stability, with infeasible designs penalized.
+*   **Phase 3: Candidate Filtering:** The resulting designs are re-evaluated using DFN simulation outputs and a stability score derived from the predicted stress response.
+*   **Phase 4: Final Design Composition:** A representative design is selected from the stable candidates, and the final point is formed by blending the selected design with the mean of the stable set to improve robustness.
+*   **Phase 5: Validation:** The selected configuration is then assessed with the coupled multiphysics framework to confirm electrochemical, thermal, and mechanical behavior.
 
-The design space ($\theta = [\theta_s, \theta_m]$) is optimized using a hierarchical approach where each objective is individually optimized and then composed:
-*   **Phase 1: Individual Objective Optimization:** For each material combination (dopant–salt pairing), three independent single-objective optimizations are performed to maximize energy capacity, power capability, and mechanical stability using gradient-based local search.
-*   **Phase 2: Design Selection & Interpolation:** The resulting optimal design vectors from each independent search are evaluated against a PDE-based stability gate. A representative design $x^*$ is selected to maximize the stability score $\mathcal{S}(x)$, followed by a local interpolation refinement ($x_{final} = 0.8 \cdot x^* + 0.2 \cdot \text{mean}(X_{stable})$) to ensure a balanced and robust multi-physics response.
-*   **Phase 3: Performance Validation:** Each composed design is simulated to verify its effectiveness across the entire objective space.
-*   **Phase 4: Candidate Ranking:** Material combinations are ranked based on their composed performance metrics to identify the globally optimal cell configuration.
-
-The selected configuration is validated through a coupled multiphysics framework in PyBaMM, assessing the electrochemical and thermal response under representative operating profiles. While this work focuses on a foundational design space, the cell architecture remains amenable to further performance enhancement via composite electrode structuring, advanced pore network engineering, perturbing other dopant sites (beyond the Fe-site) and exploring a broader range of electrolyte systems (solvents and additives) to further enhance cycle life and energy density. The current optimization scope is intentionally streamlined to accommodate the computational constraints of the DFN solver while effectively demonstrating the viability of physics-based optimization for enhancing the cost-efficiency and performance of sodium-ion energy storage systems.
+The selected configuration is validated through a coupled multiphysics framework in PyBaMM, assessing the electrochemical and thermal response under representative operating profiles. While this work focuses on a foundational design space, the cell architecture remains amenable to further performance enhancement via composite electrode structuring, advanced pore network engineering, perturbing other dopant sites (beyond the Fe-site), and exploring a broader range of electrolyte systems (solvents and additives) to further enhance cycle life and energy density. The current optimization scope is intentionally streamlined to accommodate the computational constraints of the DFN solver while effectively demonstrating the viability of physics-based optimization for enhancing the cost-efficiency and performance of sodium-ion energy storage systems.
 Computed cell-level performance metrics include:  Energy capacity (kWh), Nominal voltage (V), Continuous current (A), Peak current (A), Charge time (h or min under rated C-rate), Power capability (kW or C-rate equivalent), Cycle life (cycles to end-of-life under defined SOH threshold) 
 
 Metric	Baseline	Optimized
