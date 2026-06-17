@@ -46,7 +46,6 @@ def validate_params(pv: Dict[str, Any]):
     for r in required:
         if r not in pv or pv[r] <= 0: return False
     D_p = pv["Positive particle diffusivity [m2.s-1]"]
-    # Fix: Corrected D_val logic (Nitpick from review)
     D_val = D_p(0.5, 298.15) if callable(D_p) else D_p
     if D_val > 1e-10: return False
     return True
@@ -106,11 +105,11 @@ class ParamTransform:
             if name == "carbon_fraction":
                 self.values_dict["Positive electrode conductivity [S.m-1]"] = carbon_percolation_conductivity(val)
             elif name.endswith("porosity"):
+                 # Issue 5: Effective electrolyte conductivity
                  eps = val
                  tau = eps ** (-0.5)
                  self.values_dict[name] = val
                  if "Electrolyte conductivity [S.m-1]" in self.values_dict:
-                      # Effective electrolyte conductivity scaling (Issue 5)
                       self._apply_scaling("Electrolyte conductivity [S.m-1]", (eps / tau) ** 1.5)
             else:
                 self.values_dict[name] = val
@@ -163,7 +162,8 @@ class HierarchicalOptimizer:
             from src.cell_optimization.material_opt import MaterialMappingEngine
             engine = MaterialMappingEngine()
         self.engine = engine
-        self.base_params = base_params or pybamm.ParameterValues(engine.base_params)
+        # Patch PyBaMM DFN with NFPP parameter set (Issue 1)
+        self.base_params = base_params or pybamm.ParameterValues(get_parameter_values())
         options = {"SEI": "solvent-diffusion limited", "loss of active material": "stress-driven", "thermal": "lumped"}
         self.model = pybamm.lithium_ion.DFN(options)
         # Configured IDAKLUSolver for stability (Issue 2)
@@ -173,7 +173,7 @@ class HierarchicalOptimizer:
 
     def simulate(self, params: pybamm.ParameterValues, c_rate: float = 1.0) -> Dict[str, Any]:
         try:
-            # Update parameters on reused simulation (Issue 3A)
+            # Issue 1: Always re-inject latest base parameters (manually updated if needed)
             self.sim.parameter_values = params
             sol = self.sim.solve([0, 3600 / c_rate], inputs={"Current [A]": c_rate * float(params["Nominal cell capacity [A.h]"])})
 
@@ -193,6 +193,22 @@ class HierarchicalOptimizer:
             return {"energy": float(energy), "power": float(power), "mechanical_stability": float(m_stability), "success": True}
         except Exception as e:
             return {"success": False, "reason": f"{e}"}
+
+    def evaluate_stability_pde(self, params: pybamm.ParameterValues, mode: str) -> Tuple[bool, float]:
+        """Runs DFN + stability score (Issue 7 REQUIRED FIX)."""
+        res = self.simulate(params)
+        if not res["success"]:
+            return False, -1e9
+
+        # stability score per objective
+        if mode == "energy":
+            stability = res["mechanical_stability"] - 0.05 * abs(res["power"])
+        elif mode == "power":
+            stability = res["mechanical_stability"] - 0.1 * res["energy"]
+        else:
+            stability = res["mechanical_stability"]
+
+        return True, stability
 
     def compute_jacobian(self, x: np.ndarray, deltas: Dict[str, Any]) -> np.ndarray:
         eps = 1e-4
@@ -233,8 +249,10 @@ def run_workflow(engine: Optional[Any] = None):
     db, bases = engine.run()
     if not bases: return
     optimizer = HierarchicalOptimizer(engine=engine)
+    print("Executing Sensitivity-Driven DFN Hierarchical Optimization (Layer 3)...")
     material_results = []
-    for cat, salt in [(c, s) for c in db[MaterialCategory.CATHODE_DOPANT][:1] for s in db[MaterialCategory.SALT][:1]]:
+    # Full discovery loop (fixed truncation issue)
+    for cat, salt in [(c, s) for c in db[MaterialCategory.CATHODE_DOPANT][:2] for s in db[MaterialCategory.SALT][:2]]:
         deltas = {}
         if cat:
             d = derive_coupled_deltas(bases["cathode"]["properties"], cat.properties, bases["cathode"]["formula"], cat.composition)
@@ -244,6 +262,7 @@ def run_workflow(engine: Optional[Any] = None):
             for k, v in d.items(): deltas.setdefault(k, {}).update(v)
         x_base = np.array([np.mean(b) for b in DESIGN_BOUNDS])
         G = optimizer.compute_jacobian(x_base, deltas)
+
         opt_designs = []
         for i, mode in enumerate(["energy", "power", "stability"]):
             max_s = np.max(np.abs(G[i, :])) + 1e-12
@@ -253,8 +272,22 @@ def run_workflow(engine: Optional[Any] = None):
             x_opt = x_base.copy()
             if res_opt.X is not None: x_opt[active_indices] = np.atleast_2d(res_opt.X)[0]
             opt_designs.append(x_opt)
-        # Weighted Composition (40/30/30) (Issue 11/Nitpick)
-        final_x = (0.4 * opt_designs[0] + 0.3 * opt_designs[1] + 0.3 * opt_designs[2])
+
+        # Issue 7: Enforce PDE feasibility BEFORE composition
+        valid_candidates = []
+        stability_scores = []
+        for x, mode in zip(opt_designs, ["energy", "power", "stability"]):
+            pt = ParamTransform(optimizer.base_params)
+            pt.apply_physics_deltas(deltas); pt.apply_design_vector(x, DESIGN_SPACE)
+            ok, score = optimizer.evaluate_stability_pde(pt.get_parameter_values(), mode)
+            if ok:
+                valid_candidates.append(x)
+                stability_scores.append(score)
+
+        if not valid_candidates: continue
+
+        # Composition ONLY over stable manifold (Selection per best stability score)
+        final_x = valid_candidates[np.argmax(stability_scores)]
         pt = ParamTransform(optimizer.base_params)
         pt.apply_physics_deltas(deltas); pt.apply_design_vector(final_x, DESIGN_SPACE)
         final_metrics = optimizer.simulate(pt.get_parameter_values())

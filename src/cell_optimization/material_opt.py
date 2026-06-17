@@ -60,10 +60,15 @@ class MaterialCandidate:
     provenance: str = "OQMD"
 
 def generate_doped_formula(dopant, x):
-    # Normalized site-fraction substitution on Fe site (Issue 1)
+    # Charge-balanced formulation via Na vacancy compensation (Issue 2)
     try:
+        dopant_charge = DOPANT_CHARGES[dopant]
+        delta_q = (dopant_charge - FE_CHARGE)
+        # charge compensation via Na vacancies
+        na_deficit = x * delta_q
+
         comp = Composition({
-            "Na": 4,
+            "Na": 4.0 - na_deficit,
             "Fe": 3.0 * (1.0 - x),
             dopant: 3.0 * x,
             "P": 4,
@@ -71,16 +76,13 @@ def generate_doped_formula(dopant, x):
         })
         return comp.reduced_formula
     except Exception:
+        # Fallback to simple site fraction
         return f"Na4Fe{3.0*(1.0-x):.2f}{dopant}{3.0*x:.2f}P4O15"
-
-def enforce_charge_balance(dopant_charge, x, fe_charge=2):
-    # Charge neutrality enforcement (Issue 2)
-    delta = x * (dopant_charge - fe_charge)
-    return abs(delta) < 0.1
 
 class MaterialMappingEngine:
     def __init__(self):
         logging.basicConfig(level=logging.INFO)
+        # MP API Key must be configured via environment variable exclusively (Safety)
         self.mp_key = os.environ.get("MP_API_KEY")
         self.cache = self._load_cache()
         self.session = self._setup_session() if requests else None
@@ -219,9 +221,8 @@ class MaterialMappingEngine:
             return system, {}
 
         for d in DOPANTS:
-            # Issue 2: Charge balance before resolving
+            # Issue 2: Charge neutrality via vacancy compensation
             for x in [0.05, 0.1, 0.15]:
-                if not enforce_charge_balance(DOPANT_CHARGES[d], x): continue
                 formula = generate_doped_formula(d, x)
                 chemsys = f"Na-Fe-{d}-P-O"
 
