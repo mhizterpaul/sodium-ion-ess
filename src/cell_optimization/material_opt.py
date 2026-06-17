@@ -82,25 +82,57 @@ def generate_doped_formula(dopant, x):
     except Exception:
         return f"Na{4.0-x*(DOPANT_CHARGES.get(dopant,2)-2):.2f}Fe{3.0*(1.0-x):.2f}{dopant}{3.0*x:.2f}P4O15"
 
-def get_oxidation_states(comp: Composition):
+def get_oxidation_states(comp: Composition, structure=None):
+    # fallback deterministic oxidation map (battery-relevant prior)
+    prior = {
+        "Na": 1, "O": -2, "P": 5,
+        "Fe": 2, "Mn": 2, "Cr": 3, "Ni": 2,
+        "C": 0, "Si": 4, "F": -1
+    }
+    states = {}
     try:
-        # BVAnalyzer usually requires a structure. This will likely fallback.
-        analyzer = BVAnalyzer()
-        # The prompt suggests this call, though it usually takes a structure.
-        return analyzer.get_oxi_state_decorated_structure(comp).composition.get_el_amt_dict()
-    except Exception:
-        # fallback deterministic oxidation map (battery-relevant prior)
-        return {
-            "Na": 1, "O": -2, "P": 5,
-            "Fe": 2, "Mn": 2, "Cr": 3, "Ni": 2,
-            "C": 0, "Si": 4, "F": -1
-        }
+        # Always prioritize deterministic prior table first (Key constraint)
+        for el in comp.elements:
+            symbol = el.symbol
+            if symbol in prior:
+                states[symbol] = prior[symbol]
 
-def ionic_radius_proxy(formula: str) -> float:
+        # If any elements missing from prior, use structure-based BVAnalyzer or guesses
+        missing_symbols = [el.symbol for el in comp.elements if el.symbol not in states]
+        if missing_symbols:
+            if structure:
+                try:
+                    analyzer = BVAnalyzer()
+                    decorated = analyzer.get_oxi_state_decorated_structure(structure)
+                    for s in missing_symbols:
+                        amt_dict = decorated.composition.get_el_amt_dict()
+                        if s in amt_dict:
+                            # Summing amounts might be wrong if there are multiple sites with same element but different oxi states
+                            # But Specie(symbol, oxi) needs a single oxi. We take the most common one.
+                            # Decorated structure elements are usually Specie.
+                            for sp in decorated.composition.elements:
+                                if hasattr(sp, "symbol") and sp.symbol == s:
+                                    states[s] = getattr(sp, "oxi_state", states.get(s))
+                except Exception:
+                    pass
+
+            # Secondary fallback: guesses
+            if any(s not in states for s in missing_symbols):
+                guesses = comp.oxi_state_guesses()
+                if guesses:
+                    best_guess = guesses[0]
+                    for s in missing_symbols:
+                        if s not in states and s in best_guess:
+                            states[s] = best_guess[s]
+        return states
+    except Exception:
+        return prior
+
+def ionic_radius_proxy(formula: str, structure=None) -> float:
     """Computes a weighted average ionic radius for the composition using Specie data."""
     try:
         comp = Composition(formula)
-        states = get_oxidation_states(comp)
+        states = get_oxidation_states(comp, structure=structure)
 
         total_atoms = sum(comp.values())
         avg_radius = 0.0
@@ -172,13 +204,14 @@ class MaterialMappingEngine:
             weights = np.exp(-ALPHA * stabilities)
             weights /= np.sum(weights)
             best_formula = filtered_docs[0].formula_pretty
+            best_structure = getattr(filtered_docs[0], "structure", None)
             p = {
                 "stability": float(np.sum(weights * stabilities)),
                 "formation_energy": float(np.sum(weights * np.array([float(d.formation_energy_per_atom) for d in filtered_docs]))),
                 "band_gap": float(np.sum(weights * np.array([float(d.band_gap if d.band_gap is not None else 0.0) for d in filtered_docs]))),
                 "volume_per_atom": float(np.sum(weights * np.array([float(d.volume / d.nsites if d.nsites else 1.0) for d in filtered_docs]))),
                 "uncertainty_formation_energy": float(np.std([float(d.formation_energy_per_atom) for d in filtered_docs])),
-                "ionic_radius": ionic_radius_proxy(best_formula),
+                "ionic_radius": ionic_radius_proxy(best_formula, structure=best_structure),
                 "resolved_formula": best_formula
             }
             return p, "MATERIALS_PROJECT", p["resolved_formula"]
@@ -187,9 +220,9 @@ class MaterialMappingEngine:
             try:
                 with MPRester(api_key=self.mp_key) as mpr:
                     if chemsys:
-                        docs = mpr.materials.summary.search(chemsys=chemsys, fields=['formula_pretty', 'formation_energy_per_atom', 'energy_above_hull', 'band_gap', 'volume', 'nsites'])
+                        docs = mpr.materials.summary.search(chemsys=chemsys, fields=['formula_pretty', 'formation_energy_per_atom', 'energy_above_hull', 'band_gap', 'volume', 'nsites', 'structure'])
                     else:
-                        docs = mpr.materials.summary.search(formula=canonical_formula, fields=['formula_pretty', 'formation_energy_per_atom', 'energy_above_hull', 'band_gap', 'volume', 'nsites'])
+                        docs = mpr.materials.summary.search(formula=canonical_formula, fields=['formula_pretty', 'formation_energy_per_atom', 'energy_above_hull', 'band_gap', 'volume', 'nsites', 'structure'])
                     if docs: props, source, resolved_formula = process_docs(docs)
             except Exception as e: logging.exception(f"MP resolution failed: {e}")
 
