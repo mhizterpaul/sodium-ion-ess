@@ -8,6 +8,7 @@ from pymoo.core.problem import Problem
 from pymoo.algorithms.soo.nonconvex.ga import GA
 from pymoo.optimize import minimize as pymoo_minimize
 from nfpp_sodium_ion.src.cell_parameters.cell_alpha import get_parameter_values
+from src.simulation.utilities.mechanical.fenics_model import ThermoelasticStrainModel
 from pint import UnitRegistry
 
 # Unit registry for dimensional consistency (Issue 14)
@@ -128,10 +129,10 @@ class ParamTransform:
         self.values_dict.setdefault("Bulk solvent concentration [mol.m-3]", 2636.0)
         return pybamm.ParameterValues(self.values_dict)
 
-# --- INDIVIDUAL OBJECTIVE OPTIMIZER (NSGA-II) ---
+# --- INDIVIDUAL OBJECTIVE OPTIMIZER (GA) ---
 
 class SingleObjectiveProblem(Problem):
-    def __init__(self, optimizer, x_full, active_indices, deltas, mode):
+    def __init__(self, optimizer, x_full, active_indices, deltas, mode, ref_scale=1.0):
         xl = DESIGN_BOUNDS[active_indices, 0]
         xu = DESIGN_BOUNDS[active_indices, 1]
         super().__init__(n_var=len(active_indices), n_obj=1, n_constr=1, xl=xl, xu=xu)
@@ -140,9 +141,11 @@ class SingleObjectiveProblem(Problem):
         self.active_indices = active_indices
         self.deltas = deltas
         self.mode = mode
+        self.ref_scale = max(abs(ref_scale), 1e-9)
 
     def _evaluate(self, x, out, *args, **kwargs):
         F, G_all = [], []
+        from src.cell_optimization.chem_regularization import mechanical_stability_metric
         for xi in x:
             x_eval = self.x_full.copy(); x_eval[self.active_indices] = xi
             # Issue 14: t_p <= t_n. Normalized constraint (Issue 4.2).
@@ -156,18 +159,23 @@ class SingleObjectiveProblem(Problem):
             if validate_params(pv):
                 res = self.optimizer.simulate(pv)
                 if res["success"]:
-                    if self.mode == "energy": f_val = -res["energy"]
-                    elif self.mode == "power": f_val = -res["power"]
-                    elif self.mode == "stability": f_val = -res["mechanical_stability"]
+                    # Stage 1: Fast thermal check
+                    if res["T_max"] > 333.15: # 60 degC limit
+                        f_val = 1e9
+                    else:
+                        if self.mode == "energy": f_val = -res["energy"]
+                        elif self.mode == "power": f_val = -res["power"]
+                        elif self.mode == "stability":
+                            # Stage 1 Stability proxy
+                            f_val = -mechanical_stability_metric(stresses=res["stresses"])
 
-            # Objective scaling (Issue 4.1)
-            scale = abs(f_val) + 1e-9
-            f_val /= scale
+            # Objective scaling using constant reference (Major Nitpick Fix)
+            f_val /= self.ref_scale
 
             # Penalty shaping (Issue 4.2)
             penalty = 100 * np.square(max(g, 0))
             F.append(f_val + penalty)
-            G_all.append(g)
+            G_all.append([g])
 
         out["F"] = np.array(F); out["G"] = np.array(G_all)
 
@@ -182,8 +190,9 @@ class HierarchicalOptimizer:
         self.model = pybamm.lithium_ion.DFN(options)
         self.solver = pybamm.IDAKLUSolver(rtol=1e-7, atol=1e-9, max_step_size=5.0)
         self.sim = pybamm.Simulation(self.model, solver=self.solver)
+        self.mech_model = ThermoelasticStrainModel()
 
-    def simulate(self, params: pybamm.ParameterValues, c_rate: float = 1.0) -> Dict[str, Any]:
+    def simulate(self, params: pybamm.ParameterValues, c_rate: float = 1.0, return_sol: bool = False) -> Dict[str, Any]:
         try:
             self.sim.parameter_values = params
             sol = self.sim.solve([0, 3600 / c_rate], inputs={"Current [A]": c_rate * float(params["Nominal cell capacity [A.h]"])})
@@ -195,24 +204,51 @@ class HierarchicalOptimizer:
             energy_wh = trapz_func(power_vals, t) / 3600
 
             energy = float(energy_wh)
-            power = np.max(v * curr)
-            from src.cell_optimization.chem_regularization import mechanical_stability_metric
+            power = np.max(power_vals)
+
+            # Cheap thermal check (Stage 1)
+            T_max = np.max(sol["Cell temperature [K]"].data)
+
+            # Post-processing proxy (deprecated by FEM solve, but used for fast ranking)
             stresses = []
             for sv in ["Positive particle surface tangential stress [Pa]", "Negative particle surface tangential stress [Pa]"]:
                  try: stresses.append(np.max(np.abs(sol[sv].data)))
                  except: pass
-            m_stability = mechanical_stability_metric(stresses=stresses)
-            return {"energy": float(energy), "power": float(power), "mechanical_stability": float(m_stability), "success": True}
+
+            res = {
+                "energy": float(energy),
+                "power": float(power),
+                "T_max": float(T_max),
+                "stresses": stresses,
+                "success": True
+            }
+            if return_sol:
+                res["sol"] = sol
+            return res
         except Exception as e:
             return {"success": False, "reason": f"{e}"}
 
     def evaluate_stability_pde(self, params: pybamm.ParameterValues, mode: str) -> Tuple[bool, float]:
-        res = self.simulate(params)
+        """Stage 2: Expensive FEM thermo-mechanical solve."""
+        res = self.simulate(params, return_sol=True)
         if not res["success"]: return False, -1e9
-        if mode == "energy": stability = res["mechanical_stability"] - 0.05 * abs(res["power"])
-        elif mode == "power": stability = res["mechanical_stability"] - 0.1 * res["energy"]
-        else: stability = res["mechanical_stability"]
-        return True, stability
+
+        # Call FEniCSx solver
+        try:
+            mech_res = self.mech_model.solve_strain(res["sol"], params)
+            max_strain = mech_res["max_strain"]
+            critical_strain = self.mech_model.critical_thresholds.get("NFPP", 2e-3)
+            eta = max_strain / critical_strain
+
+            stability = -eta
+            # If failed (eta > 1), large penalty
+            if eta > 1.0:
+                stability -= 10.0 * (eta - 1.0)**2
+
+            return True, float(stability)
+        except Exception as e:
+            logging.error(f"FEM solve failed: {e}")
+            return False, -1e9
 
     def compute_jacobian(self, x: np.ndarray, deltas: Dict[str, Any]) -> np.ndarray:
         eps = 1e-4
@@ -220,7 +256,13 @@ class HierarchicalOptimizer:
         pt.apply_physics_deltas(deltas); pt.apply_design_vector(x, DESIGN_SPACE)
         base_res = self.simulate(pt.get_parameter_values())
         if not base_res["success"]: return np.zeros((3, len(DESIGN_SPACE)))
-        j_base = np.array([base_res["energy"], base_res["power"], base_res["mechanical_stability"]])
+
+        from src.cell_optimization.chem_regularization import mechanical_stability_metric
+        j_base = np.array([
+            base_res["energy"],
+            base_res["power"],
+            mechanical_stability_metric(stresses=base_res["stresses"])
+        ])
 
         G = np.zeros((3, len(DESIGN_SPACE)))
         for j in range(len(DESIGN_SPACE)):
@@ -233,7 +275,11 @@ class HierarchicalOptimizer:
             pt_p.apply_physics_deltas(deltas); pt_p.apply_design_vector(x_pert, DESIGN_SPACE)
             res = self.simulate(pt_p.get_parameter_values())
             if res["success"]:
-                j_pert = np.array([res["energy"], res["power"], res["mechanical_stability"]])
+                j_pert = np.array([
+                    res["energy"],
+                    res["power"],
+                    mechanical_stability_metric(stresses=res["stresses"])
+                ])
                 # Log-space differentiation for Jacobian stability (Issue 4.3)
                 G[:, j] = (np.log(np.abs(j_pert) + 1e-12) - np.log(np.abs(j_base) + 1e-12)) / eps
 
@@ -270,10 +316,25 @@ def run_workflow(engine: Optional[Any] = None):
         G = optimizer.compute_jacobian(x_base, deltas)
 
         opt_designs = []
+        # Calculate baseline metrics for objective scaling
+        pt_base = ParamTransform(optimizer.base_params)
+        pt_base.apply_physics_deltas(deltas); pt_base.apply_design_vector(x_base, DESIGN_SPACE)
+        base_metrics = optimizer.simulate(pt_base.get_parameter_values())
+
         for i, mode in enumerate(["energy", "power", "stability"]):
             max_s = np.max(np.abs(G[i, :])) + 1e-12
             active_indices = [j for j in range(len(DESIGN_SPACE)) if np.abs(G[i, j]) / max_s > 0.5]
-            problem = SingleObjectiveProblem(optimizer, x_base, active_indices, deltas, mode)
+
+            # Use constant baseline metric as reference scale to preserve optimization gradient
+            ref_val = 1.0
+            if base_metrics["success"]:
+                if mode == "energy": ref_val = base_metrics["energy"]
+                elif mode == "power": ref_val = base_metrics["power"]
+                elif mode == "stability":
+                    from src.cell_optimization.chem_regularization import mechanical_stability_metric
+                    ref_val = mechanical_stability_metric(stresses=base_metrics["stresses"])
+
+            problem = SingleObjectiveProblem(optimizer, x_base, active_indices, deltas, mode, ref_scale=ref_val)
             # Correct SOO algorithm (Issue 4.1)
             res_opt = pymoo_minimize(problem, GA(pop_size=20), ('n_gen', 30), verbose=False)
             x_opt = x_base.copy()
@@ -321,6 +382,20 @@ def run_workflow(engine: Optional[Any] = None):
         "parameter_grouping": groups
     }
     with open("result.json", "w") as f: json.dump(output, f, indent=2)
+
+    print("\n" + "="*50)
+    print("HIERARCHICAL OPTIMIZATION COMPLETE")
+    print("="*50)
+    print(f"Optimal Material: {output['materials']['cathode']['name']} / {output['materials']['electrolyte']['salt']}")
+    print("-" * 50)
+    print("Optimized Design Vector:")
+    for k, v in output['design_specs_representative'].items():
+        print(f"  {k:40s}: {v:12.6e}")
+    print("-" * 50)
+    print(f"Final Energy: {best['metrics']['energy']:.4f} Wh")
+    print(f"Final Power:  {best['metrics']['power']:.4f} W")
+    print("="*50 + "\n")
+
     return output
 
 if __name__ == "__main__": HierarchicalOptimizer().run()

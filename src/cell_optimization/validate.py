@@ -9,15 +9,7 @@ from nfpp_sodium_ion.src.cell_parameters.cell_alpha import get_parameter_values
 from src.cell_optimization.material_opt import MaterialMappingEngine, MaterialCategory, MaterialCandidate
 from src.cell_optimization.chem_regularization import derive_coupled_deltas, regularize_salt_props, regularize_functionalization
 from src.cell_optimization.parameter_opts import ParamTransform, HierarchicalOptimizer, DESIGN_SPACE
-
-try:
-    import dolfinx
-    from dolfinx import fem, mesh, default_scalar_type
-    from dolfinx.fem.petsc import LinearProblem
-    from mpi4py import MPI
-    import ufl
-except ImportError:
-    dolfinx = None
+from src.simulation.utilities.mechanical.fenics_model import ThermoelasticStrainModel
 
 class OptimizationValidator:
     """
@@ -29,6 +21,7 @@ class OptimizationValidator:
         self.design = optimized_design
         self.deltas = combined_deltas
         self.engine = engine or MaterialMappingEngine()
+        self.mech_model = ThermoelasticStrainModel()
 
     def get_final_parameters(self) -> pybamm.ParameterValues:
         # 1. Resolve MTMS and apply deltas
@@ -51,52 +44,28 @@ class OptimizationValidator:
         p = pt.get_parameter_values()
         return p
 
-    def solve_mechanical_integrity(self, T_avg: float, cs_avg: float, L: float, params: pybamm.ParameterValues) -> Dict[str, float]:
+    def solve_mechanical_integrity(self, sol: Any, params: pybamm.ParameterValues) -> Dict[str, float]:
         """
-        High-fidelity 1D Thermo-Mechanical Solver using FEniCSx (dolfinx).
-        Pure thermo-chemo-elastic deformation solver (elastic-only coupling).
+        High-fidelity Thermo-Mechanical Solver using consolidated fenics_model.
         """
-        T_val = float(np.mean(T_avg))
-        cs_val = float(np.mean(cs_avg))
-
-        # Effective Young's Modulus from parameters (includes degradation loss)
-        E_eff = float(params.get("Negative electrode Young's modulus [Pa]", 10e9))
-
-        if dolfinx is None:
-            # Simple physical proxy
-            alpha_t = 1e-5
-            alpha_s = 2e-5
-            strain = alpha_t * (T_val - 298.15) + alpha_s * cs_val
-            stress = E_eff * strain
-            return {"max_stress_pa": float(stress), "mechanical_integrity_factor": float(stress / 50e6)}
-
         try:
-            domain = mesh.create_interval(MPI.COMM_WORLD, 20, [0.0, float(L)])
-            V = fem.functionspace(domain, ("Lagrange", 1))
-            u, v = ufl.TrialFunction(V), ufl.TestFunction(V)
+            mech_res = self.mech_model.solve_strain(sol, params)
+            max_strain = mech_res["max_strain"]
 
-            # Expansion coefficients
-            alpha_t = 1e-5 # Thermal
-            alpha_s = 2e-5 # Chemical (Lithiation)
-            delta_T, delta_c = T_val - 298.15, cs_val
+            # Extract E_eff for stress estimation proxy
+            E_eff = float(params.get("Negative electrode Young's modulus [Pa]", 10e9))
 
-            # Governing Equation: div(sigma) = 0
-            # sigma = E_eff * (eps(u) - eps_chem - eps_thermal)
-            a = ufl.inner(E_eff * ufl.grad(u)[0], ufl.grad(v)[0]) * ufl.dx
-            L_rhs = ufl.inner(E_eff * (alpha_t * delta_T + alpha_s * delta_c), ufl.grad(v)[0]) * ufl.dx
+            critical_strain = self.mech_model.critical_thresholds.get("NFPP", 2e-3)
+            eta = max_strain / critical_strain
 
-            fdim = domain.topology.dim - 1
-            boundary_facets = mesh.locate_entities_boundary(domain, fdim, lambda x: np.isclose(x[0], 0.0))
-            bc = fem.dirichletbc(default_scalar_type(0), fem.locate_dofs_topological(V, fdim, boundary_facets), V)
-            problem = LinearProblem(a, L_rhs, bcs=[bc], petsc_options={"ksp_type": "preonly", "pc_type": "lu"})
-            uh = problem.solve()
-
-            # Stress calculation
-            sigma = E_eff * (np.gradient(uh.x.array, float(L)/20.0) - alpha_t * delta_T - alpha_s * delta_c)
-            max_sigma = np.max(np.abs(sigma))
-            return {"max_stress_pa": float(max_sigma), "mechanical_integrity_factor": float(max_sigma / 50e6)}
+            return {
+                "max_strain": float(max_strain),
+                "max_stress_pa": float(max_strain * E_eff),
+                "mechanical_integrity_factor": float(eta)
+            }
         except Exception:
-            return {"max_stress_pa": 0.0, "mechanical_integrity_factor": 0.0}
+            traceback.print_exc()
+            return {"max_strain": 0.0, "max_stress_pa": 0.0, "mechanical_integrity_factor": 0.0}
 
     def run_validation(self):
         print("Running high-fidelity DFN validation with degradation (Layer 4)...")
@@ -128,11 +97,12 @@ class OptimizationValidator:
 
             cs_n = sol["X-averaged negative particle concentration [mol.m-3]"].data
 
-            # Pass parameters to mechanical solver to access E_eff
-            mech = self.solve_mechanical_integrity(temp[-1], cs_n[-1], self.design.get("Negative electrode thickness [m]", 100e-6), params)
+            # Pass full solution to mechanical solver
+            mech = self.solve_mechanical_integrity(sol, params)
 
             trapz_func = getattr(np, "trapezoid", getattr(np, "trapz", None))
-            energy = trapz_func(v * sol["Current [A]"].data, sol["Time [s]"].data) / 3600
+            # Energy calculation (Issue 5.1) - Discharge E is always positive
+            energy = trapz_func(np.abs(v * sol["Current [A]"].data), sol["Time [s]"].data) / 3600
 
             sei_growth = 0.0
             try:
@@ -146,6 +116,7 @@ class OptimizationValidator:
                 "capacity_ah": float(cap),
                 "voltage_avg": float(np.mean(v)),
                 "max_temp_k": float(np.max(temp)),
+                "max_strain": mech["max_strain"],
                 "max_stress_pa": mech["max_stress_pa"],
                 "mechanical_integrity_factor": mech["mechanical_integrity_factor"],
                 "sei_growth_m": float(sei_growth)

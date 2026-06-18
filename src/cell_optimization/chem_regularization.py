@@ -156,7 +156,7 @@ def regularize_functionalization(base_int_formula: str, candidate_func_formula: 
     except Exception: return {"kinetic": {}, "transport": {}, "thermodynamic": {}, "mechanical": {}}
 
 def mechanical_stability_metric(stresses: Optional[List[float]] = None) -> float:
-    """Von Mises yield proxy for mechanical stability."""
+    """Von Mises yield proxy for fast Stage 1 mechanical ranking."""
     if stresses and len(stresses) >= 2:
         s1 = stresses[0]
         s2 = stresses[1]
