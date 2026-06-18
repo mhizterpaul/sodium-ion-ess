@@ -132,7 +132,7 @@ class ParamTransform:
 # --- INDIVIDUAL OBJECTIVE OPTIMIZER (GA) ---
 
 class SingleObjectiveProblem(Problem):
-    def __init__(self, optimizer, x_full, active_indices, deltas, mode):
+    def __init__(self, optimizer, x_full, active_indices, deltas, mode, ref_scale=1.0):
         xl = DESIGN_BOUNDS[active_indices, 0]
         xu = DESIGN_BOUNDS[active_indices, 1]
         super().__init__(n_var=len(active_indices), n_obj=1, n_constr=1, xl=xl, xu=xu)
@@ -141,6 +141,7 @@ class SingleObjectiveProblem(Problem):
         self.active_indices = active_indices
         self.deltas = deltas
         self.mode = mode
+        self.ref_scale = max(abs(ref_scale), 1e-9)
 
     def _evaluate(self, x, out, *args, **kwargs):
         F, G_all = [], []
@@ -168,9 +169,8 @@ class SingleObjectiveProblem(Problem):
                             # Stage 1 Stability proxy
                             f_val = -mechanical_stability_metric(stresses=res["stresses"])
 
-            # Objective scaling (Issue 4.1)
-            scale = abs(f_val) + 1e-9
-            f_val /= scale
+            # Objective scaling using constant reference (Major Nitpick Fix)
+            f_val /= self.ref_scale
 
             # Penalty shaping (Issue 4.2)
             penalty = 100 * np.square(max(g, 0))
@@ -316,10 +316,25 @@ def run_workflow(engine: Optional[Any] = None):
         G = optimizer.compute_jacobian(x_base, deltas)
 
         opt_designs = []
+        # Calculate baseline metrics for objective scaling
+        pt_base = ParamTransform(optimizer.base_params)
+        pt_base.apply_physics_deltas(deltas); pt_base.apply_design_vector(x_base, DESIGN_SPACE)
+        base_metrics = optimizer.simulate(pt_base.get_parameter_values())
+
         for i, mode in enumerate(["energy", "power", "stability"]):
             max_s = np.max(np.abs(G[i, :])) + 1e-12
             active_indices = [j for j in range(len(DESIGN_SPACE)) if np.abs(G[i, j]) / max_s > 0.5]
-            problem = SingleObjectiveProblem(optimizer, x_base, active_indices, deltas, mode)
+
+            # Use constant baseline metric as reference scale to preserve optimization gradient
+            ref_val = 1.0
+            if base_metrics["success"]:
+                if mode == "energy": ref_val = base_metrics["energy"]
+                elif mode == "power": ref_val = base_metrics["power"]
+                elif mode == "stability":
+                    from src.cell_optimization.chem_regularization import mechanical_stability_metric
+                    ref_val = mechanical_stability_metric(stresses=base_metrics["stresses"])
+
+            problem = SingleObjectiveProblem(optimizer, x_base, active_indices, deltas, mode, ref_scale=ref_val)
             # Correct SOO algorithm (Issue 4.1)
             res_opt = pymoo_minimize(problem, GA(pop_size=20), ('n_gen', 30), verbose=False)
             x_opt = x_base.copy()
