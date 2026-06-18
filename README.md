@@ -53,6 +53,6 @@ jupyter notebook src/report.ipynb
 
 ## References
 
-- **Paper Title**: Constrained DFN-Based NFPP Sodium-Ion Cell Optimization and Model-Based Battery Management System Design
+- **Paper Title**: DFN-Based NFPP Sodium-Ion Cell Optimization and Model-Based Battery Management System Design
 - **Core Chemistry**: Sodium Iron Pyrophosphate (NFPP) vs. Hard Carbon
-- **Modeling Framework**: PyBaMM (Electrochemical), FEniCSx (Mechanical), Simscape (Control/Plant)
+- **Modeling Framework**: PyBaMM (Electrochemical), FEniCSx (Mechanical), Simulink (Control)
