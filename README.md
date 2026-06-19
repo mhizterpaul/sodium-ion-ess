@@ -29,6 +29,7 @@ $P_{solar}(t) = P_{load}(t) + P_{bat}(t) + P_{reactive}(t) + P_{harmonic}(t) + P
 *   **System Availability**: $\mathbb{P}(\text{instability}) \le \epsilon$
 *   **Operational Life**: $\min \Delta SOH(t) + \Delta R_{inverter}(t)$
 *   **Energy Utilization Efficiency**: $\eta = \frac{\int P_{load}(t) dt}{\int P_{solar}(t) dt}$
+*   **Sustainability & Economic Viability**: Minimized lifecycle cost via SOH-aware partitioning and minimized dump dissipation.
 
 ### 3. Hierarchical Optimization
 A multi-stage framework for cell design enhancement:

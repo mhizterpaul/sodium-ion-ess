@@ -92,4 +92,8 @@ function [P_targets, states] = dispatch_controller(inputs, params)
     total_energy_delivered = total_energy_delivered + P_load;
     states.efficiency = P_load / (P_sol + 1e-6);
     states.stability_index = 1.0 - (P_reactive / (params.P_max_bat + 1e-6));
+
+    % Sustainability & Economic Viability Proxy (Normalized)
+    % Penalizes dump dissipation and battery degradation to reflect LCOS
+    states.economic_viability = 1.0 - (0.7 * abs(P_bat)/(params.P_max_bat*inputs.SOH + 1e-6) + 0.3 * P_dump/(params.P_max_dump + 1e-6));
 end

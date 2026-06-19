@@ -170,6 +170,7 @@ The system optimizes a flow partition policy $\pi: P_{solar}(t) \rightarrow \{P_
 *   **System Availability**: $\mathbb{P}(\text{instability}) \le \epsilon$ (enforcing a "no collapse" constraint).
 *   **Operational Life Maximization**: $\min \Delta SOH(t) + \Delta R_{inverter}(t)$ for both the battery and the power electronics.
 *   **Energy Utilization Efficiency**: $\eta = \frac{\int P_{load}(t) dt}{\int P_{solar}(t) dt}$
+*   **Sustainability & Economic Viability**: The framework enforces economic viability by minimizing the Levelized Cost of Storage (LCOS) through SOH-informed partitioning and maximizing the utilization of the solar resource. Sustainability is integrated by prioritizing non-fluorinated material systems and ensuring operational longevity to minimize hardware replacement cycles.
 
 **2.3 Minimum System Load & Stability Manifold**
 The system identifies $P_{min}(t) = P_{load}^{required} + P_{stability\_reserve}$, where the stability reserve includes reactive compensation margin, battery headroom, and transient absorption capacity. If $P_{solar}(t) > P_{min}(t)$, the system must activate the battery absorption or the dump sink to maintain a stable operating manifold, ensuring physics-driven continuous dissipation pathways.
