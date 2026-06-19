@@ -9,7 +9,7 @@ The plant environment represents the physical microgrid hardware and electrochem
 *   **Microgrid Assets**:
     *   **Solar PV**: 100kWp mono-crystalline silicon array.
     *   **Primary Generation Array**: 50kW dispatchable power asset.
-    *   **BESS**: 100kWh / 50kW sodium-ion storage system (208 modules).
+    *   **BESS**: 100kWh / 50kW AC-coupled sodium-ion storage system (208 modules).
 *   **Electrochemical Core**: 16S1P NFPP pouch-cell pack modules modeled via the Doyle-Fuller-Newman (DFN) framework.
 *   **Thermal Dynamics**: Distributed core-casing thermal nodes with natural convection and aging kinetics.
 *   **Power Conditioning**: Utility-scale PCUs with step-up transformers and MV switchgear for grid interconnection.

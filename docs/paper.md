@@ -143,7 +143,7 @@ The microgrid integrates diverse generation and storage assets to ensure reliabl
     *   **Capacity**: 100 kWh total energy, 50 kW power rating.
     *   **Core Unit**: 16S1P NFPP Sodium-Ion pouch-cell modules (48V nominal, 10Ah).
     *   **Configuration**: 208 modules (packs) connected in a series-parallel arrangement to achieve the 100 kWh nameplate capacity.
-    *   **Coupling**: DC-coupled via bidirectional isolated buck-boost converters.
+    *   **Coupling**: AC-coupled via dedicated utility-scale BESS Power Conditioning Units (PCUs).
 
 1.4 Utility-Scale Power Conditioning & Interconnection
 The interface layer regulates high-power bidirectional energy flow and Point of Common Coupling (PCC) stability.

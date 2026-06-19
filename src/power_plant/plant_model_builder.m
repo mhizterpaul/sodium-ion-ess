@@ -4,21 +4,27 @@
 
 function plant = build_physical_plant(params)
     % 1. Utility-Scale Interconnection & PCU
-    plant.pccs.type = 'Utility-Scale Power Conditioning Unit';
-    plant.pccs.components = {'Central Inverter', 'Step-up Transformer', 'MV Switchgear'};
+    plant.pccs.type = 'Utility-Scale Power Conditioning & Interconnection';
+    plant.pccs.pcu.type = 'central_inverter_pcu.ssc';
+    plant.pccs.pcu.rating_kva = 150;
+    plant.pccs.transformer.type = 'step_up_transformer.ssc';
+    plant.pccs.transformer.ratio = '415V/11kV';
+    plant.pccs.switchgear.type = 'mv_switchgear.ssc';
 
     % 2. Microgrid Generation Assets
     plant.generation.solar.model = 'Mono-crystalline PV';
     plant.generation.solar.capacity_kwp = 100;
     plant.generation.primary_array.capacity_kw = 50;
 
-    % 3. Modular BESS Assembly (208 Modules)
+    % 3. Modular AC-Coupled BESS Assembly (208 Modules)
     num_modules = 208;
     plant.bess.modules = cell(num_modules, 1);
+    plant.bess.coupling = 'AC-Coupled via BESS-PCU';
 
     for m = 1:num_modules
         plant.bess.modules{m}.id = ['Module_' num2str(m)];
         plant.bess.modules{m}.type = 'nfpp_cell.ssc';
+        plant.bess.modules{m}.interface = 'utility_pcu.ssc';
     end
 
     % 3. Enclosure & Environment
