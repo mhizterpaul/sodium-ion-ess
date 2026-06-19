@@ -109,7 +109,7 @@ class StabilityValidator:
 
         return results
 
-    def export_to_matlab(self, results, output_path="src/bms_design/optimized_params.mat"):
+    def export_to_matlab(self, results, output_path="src/power_plant/optimized_params.mat"):
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         sio.savemat(output_path, {"optimized_params": results})
         print(f"Validated Model exported to {output_path}")

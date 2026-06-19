@@ -1,4 +1,4 @@
-# DFN-Based NFPP Sodium-Ion Cell Optimization and Model-Based Battery Management System Design
+# DFN-Based Co-Optimization of NFPP Sodium-Ion Cells and Model-Informed Energy Dispatch in Hybrid Solar–Battery Energy Storage Systems
 
 ## Methodology
 
@@ -116,7 +116,7 @@ Cycle life	5000	8000–9000
 ESS Unit Model: Multiphysics Digital Twin
 The ESS is implemented as a high-fidelity digital twin coupling electrochemical, thermal, fluid, and mechanical domains.
 
-1. PHYSICAL PLANT MODEL
+1. PHYSICAL POWER PLANT MODEL
 The plant model represents the physical hardware of the 16S1P sodium-ion battery pack and its associated infrastructure.
 
 1.1 Cell Configuration & Packaging
@@ -147,31 +147,41 @@ The integrated ESS unit, housing the 16S1P pack and the power conversion system,
 *   **Length:** 180 mm (aligned with 130 mm cell length plus internal clearances).
 *   **Width:** 140 mm (aligned with 70 mm cell width plus enclosure thickness).
 
-2. Model-Based Battery Management System Design (Core Research Contribution)
-The BMS is designed as a high-fidelity algorithmic layer that manages the cell plant through state estimation, protection, and safety-enforced control.
+2. Model-Informed Energy Dispatch (Core Research Contribution)
+The dispatch system is designed as a real-time partitioning engine that manages stochastic solar power into physically constrained sinks while maintaining a stability manifold.
 
-**2.1 State Estimation Layer**
-The BMS implements real-time estimation of non-measurable internal states:
-*   **SOC Estimation (UKF):** Joint estimation via Unscented Kalman Filter (UKF) utilizes a nonlinear OCV-SOC mapping and a 2-RC equivalent circuit model to track charge levels across the 16-cell string.
-*   **SOH Inference (RLS):** Recursive Least Squares (RLS) algorithms identify internal resistance growth ($R_0$ drift) to estimate capacity fade and power degradation.
-*   **Temperature Inference:** Distributed sensing combined with a lumped thermal observer provides core temperature estimates where direct sensing is unavailable.
+**2.1 Fundamental Energy Decomposition**
+The system controls the partition of solar power:
+$P_{solar}(t) = P_{load}(t) + P_{bat}(t) + P_{reactive}(t) + P_{harmonic}(t) + P_{dump}(t) + P_{loss}(t)$
 
-**2.2 Safety Enforcement & Current Arbitration**
-Core safety logic monitors and mitigates hazardous conditions:
-*   **Overcurrent in Discharge (OCD):** Protects the battery pack from excessive load current. By setting trip points (such as OCD1 and OCD2 for varying pulse durations), the pack only delivers the current it was designed to handle.
-*   **Overcurrent in Charge:** Monitors current in both directions. This protects the pack from rogue chargers that might output unsafe levels of voltage or current, which could lead to cell venting.
-*   **Temperature Monitoring:** A robust BMS should monitor temperature to prevent thermal runaway. The video highlights the importance of granularity with four specific settings:
-    *   **Over Temperature in Discharge (OTD):** Protects against overheating during high-current use.
-    *   **Over Temperature in Charge (OTC):** Ensures the pack stays cool during the charging process.
-    *   **Under Temperature in Discharge/Charge:** Prevents the battery from being used or charged in excessively cold conditions where cell chemistry might be damaged.
-*   **Short Circuit Protection (SD):** This is described as one of the most critical safety features. A short circuit can cause a massive current spike (potentially hundreds of amps), leading to rapid heating, venting, and fire. The BMS must be able to detect and isolate the battery from the load immediately upon detecting a short.
+Where each term represents a distinct energy channel:
+*   **$P_{load}$ (Useful Real Power)**: Energy consumed by the system load. The primary objective is to maximize this delivery.
+*   **$P_{bat}$ (Electrochemical Buffering)**: Acts as a state transition constraint actuator, not merely storage scheduling. It is limited by instantaneous SOC, SOH, and thermal states.
+*   **$P_{reactive}$ (Grid-Forming Stability)**: Represents electromagnetic field support for voltage stability ($Q(t) \neq 0$). It is used to damp oscillations and regulate transient responses.
+*   **$P_{harmonic}$ (Unwanted Spectral Energy)**: Inverter switching distortion and nonlinear load coupling. This is treated as a penalty state to be minimized.
+*   **$P_{dump}$ (Safety Dissipation Sink)**: A controlled failure absorption channel (e.g., resistive dump loads) activated when the battery or load is saturated and reactive control is insufficient.
+*   **$P_{loss}$ (Physical Inefficiency)**: Unavoidable conduction and switching losses.
 
-**2.4 Control & Balancing Layer**
-*   **State Machine:** Deterministic management of Standby, Precharge, Run, and Fault states.
-*   **Cell Equalization:** Cell balancing using adaptive, SOH-aware equalization strategies to minimize cell-to-cell SOC dispersion and mitigate accelerated degradation under varying operating conditions.
-*   **Control Objective:** Determine the optimal charge-discharge trajectory given the estimated state to maximize pack performance while respecting safety, thermal, and SOC constraints.
+**2.2 Optimization Framework**
+The system optimizes a flow partition policy $\pi: P_{solar}(t) \rightarrow \{P_{load}, P_{bat}, P_{reactive}, P_{dump}\}$ subject to stability, electrochemical, and availability constraints.
+
+**Core Objectives:**
+*   **Maximize Useful Energy Delivery**: $\max \mathbb{E}[P_{load}(t)]$
+*   **System Availability**: $\mathbb{P}(\text{instability}) \le \epsilon$ (enforcing a "no collapse" constraint).
+*   **Operational Life Maximization**: $\min \Delta SOH(t) + \Delta R_{inverter}(t)$ for both the battery and the power electronics.
+*   **Energy Utilization Efficiency**: $\eta = \frac{\int P_{load}(t) dt}{\int P_{solar}(t) dt}$
+
+**2.3 Minimum System Load & Stability Manifold**
+The system identifies $P_{min}(t) = P_{load}^{required} + P_{stability\_reserve}$, where the stability reserve includes reactive compensation margin, battery headroom, and transient absorption capacity. If $P_{solar}(t) > P_{min}(t)$, the system must activate the battery absorption or the dump sink to maintain a stable operating manifold, ensuring physics-driven continuous dissipation pathways.
+
+**2.4 System Stability Dimensions**
+Stability is evaluated across four dimensions:
+1.  **Energy Stability**: Maintaining $P_{in} \approx P_{out}$ balance.
+2.  **Electrical Stability**: Active voltage regulation and frequency damping.
+3.  **Dynamic Stability**: Transient response timing and ramp rate control.
+4.  **Spectral Stability**: Harmonic suppression and switching noise containment.
 
 3. RESEARCH SCOPE DECOMPOSITION
-This research maintains a clean separation between the physical plant and the control algorithms:
-*   **Fixed Plant Model:** The NFPP Cell (DFN-informed electro-thermal proxy) is treated as the static environment.
-*   **Variable BMS Layer:** The core contribution lies in the design, stability, and robustness of the estimation and protection algorithms described above.
+This research maintains a clean separation between the physical plant and the partitioning algorithms:
+*   **Fixed Power Plant Model**: The NFPP Cell (DFN-informed electro-thermal proxy) and power conversion hardware are treated as the static environment.
+*   **Variable Energy Dispatch Layer**: The core contribution lies in the real-time partitioning of stochastic power into physically constrained sinks while maintaining a stability manifold and minimizing degradation.
