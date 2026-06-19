@@ -129,19 +129,34 @@ The plant model represents the physical hardware of the 16S1P sodium-ion battery
 **Thermal Node Topology:**
 *   Cell Core (heat source) → Cell Casing (poly) → Ambient (convection).
 
-1.3 Power Conversion and Conditioning System
+1.3 Microgrid Capacity & Modeling
+The microgrid integrates diverse generation and storage assets to ensure reliable energy delivery.
+
+*   **Solar PV Subsystem**:
+    *   **Model**: Mono-crystalline Silicon PV (High-efficiency 250W modules).
+    *   **Configuration**: 400 modules in a series-parallel array (100 kWp nameplate capacity).
+    *   **Inverter**: Central 100kW three-phase grid-tied inverter with MPPT.
+*   **Primary Generation Array**:
+    *   **Capacity**: 50 kW continuous generation capacity.
+    *   **Role**: Primary dispatchable energy asset providing a stable baseline power to complement the stochastic solar subsystem.
+*   **Battery Energy Storage System (BESS)**:
+    *   **Capacity**: 100 kWh total energy, 50 kW power rating.
+    *   **Core Unit**: 16S1P NFPP Sodium-Ion pouch-cell modules (optimized via DFN co-optimization).
+    *   **Coupling**: DC-coupled via bidirectional isolated buck-boost converters.
+
+1.4 Power Conversion and Conditioning System
 The interface layer regulates bidirectional energy flow and grid stability.
-*   **Topology:** AC Grid → STS → PQC → Active Rectifier → DC Link → Bidirectional DC/DC.
+*   **Topology**: AC Grid → STS → PQC → Active Rectifier → DC Link → Bidirectional DC/DC.
 *   **Grid Interface:** Static Transfer Switch (STS) for <4ms grid/island transition.
 *   **PQC:** Series-injected DVR-equivalent sag compensator for voltage sag/swell mitigation.
 *   **Conversion:** Bidirectional isolated buck-boost stage with integrated PWM and LC filtering.
 
-1.4 Interconnects, Sensors & Faults
+1.5 Interconnects, Sensors & Faults
 *   **Busbars:** Nickel-plated copper with $I^2R$ Joule heating modeling.
 *   **Sensors:** 16-bit voltage ADCs (<2mV noise), NTC thermistors (every 2 cells), and Hall-effect current sensors.
 *   **Fault Injection:** Hooks for internal shorts, sensor drift, and converter efficiency drops.
 
-1.5 ESS Unit Physical Dimensions
+1.6 ESS Unit Physical Dimensions
 The integrated ESS unit, housing the 16S1P pack and the power conversion system, is designed with the following external dimensions:
 *   **Height:** 450 mm (includes cell stack, air draft spacing, and top-mounted PCCS).
 *   **Length:** 180 mm (aligned with 130 mm cell length plus internal clearances).
@@ -166,14 +181,24 @@ Where each term represents a distinct energy channel:
 The system optimizes a flow partition policy $\pi: P_{solar}(t) \rightarrow \{P_{load}, P_{bat}, P_{reactive}, P_{dump}\}$ subject to stability, electrochemical, and availability constraints.
 
 **Core Objectives:**
-*   **Maximize Useful Energy Delivery**: $\max \mathbb{E}[P_{load}(t)]$
-*   **System Availability**: $\mathbb{P}(\text{instability}) \le \epsilon$ (enforcing a "no collapse" constraint).
-*   **Operational Life Maximization**: $\min \Delta SOH(t) + \Delta R_{inverter}(t)$ for both the battery and the power electronics.
-*   **Energy Utilization Efficiency**: $\eta = \frac{\int P_{load}(t) dt}{\int P_{solar}(t) dt}$
-*   **Sustainability & Economic Viability**: The framework enforces economic viability by minimizing the Levelized Cost of Storage (LCOS) through SOH-informed partitioning and maximizing the utilization of the solar resource. Sustainability is integrated by prioritizing non-fluorinated material systems and ensuring operational longevity to minimize hardware replacement cycles.
+The primary objective is to **Maximize Plant Utilization** ($U(t)$):
+$\max U(t) = P_{load}(t) + P_{battery\_use}(t) + P_{dump\_equivalent}(t)$
 
-**2.3 Minimum System Load & Stability Manifold**
-The system identifies $P_{min}(t) = P_{load}^{required} + P_{stability\_reserve}$, where the stability reserve includes reactive compensation margin, battery headroom, and transient absorption capacity. If $P_{solar}(t) > P_{min}(t)$, the system must activate the battery absorption or the dump sink to maintain a stable operating manifold, ensuring physics-driven continuous dissipation pathways.
+**Subject to:**
+1.  **Economic Viability (Sustainability Constraint)**: $U(t) \ge MST(t)$
+2.  **System Availability**: $\mathbb{P}(\text{instability}) \le \epsilon$ (enforcing a "no collapse" manifold constraint).
+3.  **Degradation Constraint**: $\Delta SOH(t) \le \epsilon_{SOH}$ (minimizing battery and inverter wear).
+4.  **Energy Utilization Efficiency**: $\eta = \frac{\int P_{load}(t) dt}{\int P_{solar}(t) dt}$
+
+**2.3 Minimum Sustainable Throughput (MST) & Stability Manifold**
+Sustainability and economic viability are enforced via a hard lower bound on system utilization. Let $R(t)$ be the revenue from useful energy and $C_{opex}(t)$ be the operating expenditure (maintenance, inverter losses, degradation, and auxiliary systems). The sustainability condition is defined as:
+$R(t) \ge C_{opex}(t) \Rightarrow p(t) \cdot U(t) \ge C_{opex}(t)$
+where $p(t)$ is the energy price.
+
+The system identifies the **Minimum Sustainable Throughput (MST)**:
+$MST(t) = \frac{C_{opex}(t)}{p(t)}$
+
+This value represents the minimum energy throughput rate across the plant required to avoid economic collapse. If plant usage is too low, the system becomes non-viable; if usage is too high, it faces accelerated degradation and instability risk. The dispatch policy enforces this bound while maintaining the stability reserve (reactive compensation margin, battery headroom, and transient absorption capacity). If $P_{solar}(t) > MST(t)$, the system activates controlled dissipation or storage pathways to maintain the stability manifold.
 
 **2.4 System Stability Dimensions**
 Stability is evaluated across four dimensions:

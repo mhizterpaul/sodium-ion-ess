@@ -5,10 +5,14 @@ This repository implements a high-fidelity digital twin and optimization framewo
 ## Research Scope
 
 ### 1. Fixed Power Plant Model (Digital Twin)
-The plant environment represents the physical hardware and electrochemical dynamics:
-*   **Electrochemical Core**: Standalone 16S1P NFPP pouch-cell pack (10Ah, 48V) modeled via the Doyle-Fuller-Newman (DFN) framework.
-*   **Thermal Dynamics**: Distributed core-casing thermal nodes with natural convection and Arrhenius-based aging kinetics.
-*   **Power Conversion**: Full conversion and conditioning system (STS, PQC, isolated DC/DC) coupled with a solar generation profile.
+The plant environment represents the physical microgrid hardware and electrochemical dynamics:
+*   **Microgrid Assets**:
+    *   **Solar PV**: 100kWp mono-crystalline silicon array.
+    *   **Primary Generation Array**: 50kW dispatchable power asset.
+    *   **BESS**: 100kWh / 50kW sodium-ion storage system.
+*   **Electrochemical Core**: 16S1P NFPP pouch-cell pack modules modeled via the Doyle-Fuller-Newman (DFN) framework.
+*   **Thermal Dynamics**: Distributed core-casing thermal nodes with natural convection and aging kinetics.
+*   **Power Conversion**: Full conversion system (STS, PQC, isolated DC/DC) regulating bidirectional flows.
 
 ### 2. Model-Informed Energy Dispatch (Core Contribution)
 The primary research focus is the real-time partitioning of stochastic solar power into physically constrained sinks while maintaining a stability manifold.
@@ -25,11 +29,13 @@ $P_{solar}(t) = P_{load}(t) + P_{bat}(t) + P_{reactive}(t) + P_{harmonic}(t) + P
 *   **$P_{loss}$ (Physical Inefficiency)**: Unavoidable conduction and switching losses.
 
 #### Optimization Objectives
-*   **Maximize Useful Energy**: $\max \mathbb{E}[P_{load}(t)]$
+The primary goal is to **Maximize Plant Utilization**:
+$U(t) = P_{load}(t) + P_{battery\_use}(t) + P_{dump\_equivalent}(t)$
+
+*   **Sustainability Constraint (MST)**: $U(t) \ge MST(t) = \frac{C_{opex}(t)}{p(t)}$
 *   **System Availability**: $\mathbb{P}(\text{instability}) \le \epsilon$
-*   **Operational Life**: $\min \Delta SOH(t) + \Delta R_{inverter}(t)$
+*   **Degradation Control**: $\min \Delta SOH(t) + \Delta R_{inverter}(t)$
 *   **Energy Utilization Efficiency**: $\eta = \frac{\int P_{load}(t) dt}{\int P_{solar}(t) dt}$
-*   **Sustainability & Economic Viability**: Minimized lifecycle cost via SOH-aware partitioning and minimized dump dissipation.
 
 ### 3. Hierarchical Optimization
 A multi-stage framework for cell design enhancement:
