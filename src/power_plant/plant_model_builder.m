@@ -24,10 +24,10 @@ function plant = build_physical_plant(params)
     for m = 1:num_modules
         plant.bess.modules{m}.id = ['Module_' num2str(m)];
         plant.bess.modules{m}.type = 'nfpp_cell.ssc';
-        plant.bess.modules{m}.interface = 'utility_pcu.ssc';
+        plant.bess.modules{m}.interface = 'central_inverter_pcu.ssc';
     end
 
-    % 3. Enclosure & Environment
+    % 4. Enclosure & Environment
     plant.enclosure.type = 'Standalone NFPP ESS';
     plant.enclosure.dims = [450, 180, 140]; % mm
 
