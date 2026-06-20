@@ -164,14 +164,17 @@ The integrated BESS unit, housing 208 modular 16S1P packs, the utility-scale PCU
 *   **Width:** 2,438 mm (Standard 20ft container width).
 *   **Height:** 2,591 mm (Standard 20ft container height).
 
-2. Model-Informed Plant Health, Efficiency, and Survivability Controller (Core Contribution)
-The control layer is reframed from a standard demand-following system to a plant health and survivability engine. The primary objective is to maximize integrated plant efficiency while ensuring the system state remains within the safe operating manifold.
+2. Model-Informed Plant Health, Energy Stability, and Fault Detection Controller (Core Contribution)
+The control layer focuses on ensuring plant energy stability and detecting abnormal operational states. The primary objective is to maintain stable energy throughput while identifying faults through high-fidelity digital twin comparisons.
 
 **Plant State Vector**: $x(t) = [V, I, f, THD, Q, P_{loss}, SOC, SOH, T, Z]$
 
-**Control Objective**: $\max \int_0^T \eta_{plant}(t)\,dt$ subject to $x(t) \in \Omega_{safe}$.
+**Control Objectives**:
+1.  **Energy Stability**: Maintain $P_{in} \approx P_{out} + P_{bat} + P_{losses}$ balance to ensure system equilibrium and prevent technical collapse.
+2.  **Fault Detection**: Minimize the latency between fault occurrence and detection using residual-based monitoring derived from digital twin comparisons.
+3.  **Sustainability Compliance**: Ensure system utilization remains above the Minimum Sustainable Throughput (MST) to maintain economic viability.
 
-### 2.1 Fault Detection & Digital Twin Residuals
+### 2.1 Residual-Based Fault Detection
 Rather than simple load prediction, the system estimates deviations from expected behavior using digital twin residuals:
 $r(t) = y(t) - \hat{y}(t|x)$
 where $y(t)$ are measured variables and $\hat{y}$ is the digital twin prediction. The fault indicator $F(t) = ||r(t)||_W$ triggers diagnostic actions for inverter faults, thermal abnormalities, or battery degradation events.
