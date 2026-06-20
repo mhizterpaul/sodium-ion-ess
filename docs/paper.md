@@ -152,16 +152,18 @@ The interface layer regulates high-power bidirectional energy flow and Point of 
 *   **Interconnection**: 11kV/415V three-phase delta-wye transformer for galvanic isolation and grid impedance matching.
 *   **Protection**: Integrated MV reclosers, surge arresters, and anti-islanding relays at the PCC.
 
-1.5 Interconnects, Sensors & Faults
-*   **Busbars:** Nickel-plated copper with $I^2R$ Joule heating modeling.
-*   **Sensors:** 16-bit voltage ADCs (<2mV noise), NTC thermistors (every 2 cells), and Hall-effect current sensors.
-*   **Fault Injection:** Hooks for internal shorts, sensor drift, and converter efficiency drops.
+1.5 Power Plant Instrumentation & Monitoring
+The system integrates utility-scale monitoring to ensure compliant dispatch and stability.
+*   **BESS Data Interface**: Aggregated data link to internal battery management units providing real-time state estimates (SOC, SOH, and internal resistance).
+*   **SCADA Integration**: Modbus/TCP interface for remote dispatch commands and high-resolution telemetry (100ms logging).
+*   **Power Quality Analyzers**: PCC-mounted analyzers for total harmonic distortion (THD) monitoring and phase-angle tracking.
+*   **Fault Management**: Utility-scale protective relaying (ANSI 50/51, 27/59) for overcurrent and voltage-out-of-bounds containment.
 
-1.6 ESS Unit Physical Dimensions
-The integrated ESS unit, housing the 16S1P pack and the power conversion system, is designed with the following external dimensions:
-*   **Height:** 450 mm (includes cell stack, air draft spacing, and top-mounted PCCS).
-*   **Length:** 180 mm (aligned with 130 mm cell length plus internal clearances).
-*   **Width:** 140 mm (aligned with 70 mm cell width plus enclosure thickness).
+1.6 Utility-Scale ESS Enclosure Dimensions
+The integrated BESS unit, housing 208 modular 16S1P packs, the utility-scale PCU, and thermal management systems, is designed with the following external dimensions (20ft ISO container scale):
+*   **Length:** 6,058 mm (Standard 20ft container length).
+*   **Width:** 2,438 mm (Standard 20ft container width).
+*   **Height:** 2,591 mm (Standard 20ft container height).
 
 2. Model-Informed Energy Dispatch (Core Research Contribution)
 The dispatch system is designed as a real-time partitioning engine that manages stochastic solar power into physically constrained sinks while maintaining a stability manifold.

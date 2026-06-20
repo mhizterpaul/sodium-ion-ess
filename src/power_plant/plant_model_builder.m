@@ -28,8 +28,8 @@ function plant = build_physical_plant(params)
     end
 
     % 4. Enclosure & Environment
-    plant.enclosure.type = 'Standalone NFPP ESS';
-    plant.enclosure.dims = [450, 180, 140]; % mm
+    plant.enclosure.type = 'Containerized Utility-Scale ESS';
+    plant.enclosure.dims = [6058, 2438, 2591]; % mm (20ft ISO)
 
     disp('Full Hybrid Solar-Storage Power Plant Digital Twin Built:');
     disp('  Generation: 100kWp Solar PV + 50kW Primary Array');
