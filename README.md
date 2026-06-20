@@ -25,7 +25,7 @@ $P_{solar}(t) = P_{load}(t) + P_{bat}(t) + P_{reactive}(t) + P_{harmonic}(t) + P
 *   **$P_{bat}$ (Electrochemical Buffering)**: State transition constraint actuator limited by SOC, SOH, and thermal states.
 *   **$P_{reactive}$ (Grid-Forming Stability)**: Electromagnetic field support for voltage stability ($Q(t) \neq 0$).
 *   **$P_{harmonic}$ (Unwanted Spectral Energy)**: Penalty state representing inverter switching distortion and nonlinear coupling.
-*   **$P_{dump}$ (Safety Dissipation)**: Controlled failure absorption channel (resistive dump loads) when sinks are saturated.
+*   **$P_{dump}$ (Safety Dissipation)**: Controlled back-EMF suppression and failure absorption channel (resistive dump loads) when sinks are saturated.
 *   **$P_{loss}$ (Physical Inefficiency)**: Unavoidable conduction and switching losses.
 
 #### Optimization Objectives

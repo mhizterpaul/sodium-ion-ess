@@ -170,7 +170,7 @@ The control layer focuses on ensuring plant energy stability and detecting abnor
 **Plant State Vector**: $x(t) = [V, I, f, THD, Q, P_{loss}, SOC, SOH, T, Z]$
 
 **Control Objectives**:
-1.  **Energy Stability**: Maintain $P_{in} \approx P_{out} + P_{bat} + P_{losses}$ balance to ensure system equilibrium and prevent technical collapse.
+1.  **Energy Stability**: Intelligence to detect and dissipate excess back EMF and surge energy via controlled dump channels. Maintaining $P_{in} \approx P_{out} + P_{bat} + P_{losses}$ balance to ensure system equilibrium and prevent technical collapse.
 2.  **Fault Detection**: Minimize the latency between fault occurrence and detection using residual-based monitoring derived from digital twin comparisons.
 3.  **Sustainability Compliance**: Ensure system utilization remains above the Minimum Sustainable Throughput (MST) to maintain economic viability.
 
@@ -220,7 +220,7 @@ The physical model incorporates realistic utility-scale loads, including inducti
 
 **2.4 System Stability Dimensions**
 Stability is evaluated across four dimensions:
-1.  **Energy Stability**: Maintaining $P_{in} \approx P_{out}$ balance.
+1.  **Energy Stability**: Maintaining $P_{in} \approx P_{out}$ balance and intelligent back-EMF suppression via controlled dissipation.
 2.  **Electrical Stability**: Active voltage regulation and frequency damping.
 3.  **Dynamic Stability**: Transient response timing and ramp rate control.
 4.  **Spectral Stability**: Harmonic suppression and switching noise containment.
