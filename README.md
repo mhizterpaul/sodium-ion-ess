@@ -1,6 +1,8 @@
+# DFN-Based Optimization of NFPP Sodium-Ion Cells for Integrated Plant-Level Control in Solar–BESS Microgrids
+
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mhizterpaul/sodium-ion-ess/blob/main/src/report.ipynb)
 
-This repository implements a high-fidelity digital twin and optimization framework for Sodium Iron Pyrophosphate (NFPP) battery systems integrated with hybrid solar energy dispatch. The research follows a **Clean Decomposition** strategy, separating a fixed physical plant from a variable, high-performance algorithmic control layer.
+This repository implements a high-fidelity digital twin and optimization framework for Sodium Iron Pyrophosphate (NFPP) battery systems integrated with utility-scale solar-BESS microgrid control.
 
 ## Research Scope
 
@@ -14,8 +16,11 @@ The plant environment represents the physical microgrid hardware and electrochem
 *   **Thermal Dynamics**: Distributed core-casing thermal nodes with natural convection and aging kinetics.
 *   **Power Conditioning**: Utility-scale PCUs with step-up transformers and MV switchgear for grid interconnection.
 
-### 2. Plant Fault Detection, State Estimation & Sustainability (Core Contribution)
-The primary research focus is a model-informed system that accurately performs real-time state estimation and identifies faults using digital twin residuals.
+### 2. Plant Fault Detection, Network State Estimation & Sustainability (Core Contribution)
+The primary research focus is an analytical framework that performs real-time network state estimation (distribution lines and load network) and fault detection to ensure plant integrity.
+
+**Monitoring Objective**: Ensure system visibility and integrity under noise and faults while identifying opportunities for real power improvement.
+**Optimal Sustainability**: Determine the system parameters where plant operation becomes sustainable through MST derivation.
 
 #### Fundamental Energy Decomposition
 Controlling the partition:

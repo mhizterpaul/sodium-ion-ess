@@ -164,15 +164,14 @@ The integrated BESS unit, housing 208 modular 16S1P packs, the utility-scale PCU
 *   **Width:** 2,438 mm (Standard 20ft container width).
 *   **Height:** 2,591 mm (Standard 20ft container height).
 
-2. Model-Informed Plant Fault Detection, State Estimation, and Sustainability Controller (Core Contribution)
-The control layer focuses on real-time state estimation and the detection of abnormal operational states. The primary objective is to accurately estimate internal plant states and identify faults through high-fidelity digital twin comparisons.
+2. Model-Informed Plant Fault Detection, Network State Estimation, and Sustainability Framework (Core Contribution)
+The proposed framework provides diagnostic and estimation capabilities for BESS-Solar microgrids. This is an analytical and monitoring layer rather than an active control system. The focus is on real-time estimation of the network state (equivalent impedance and states of distribution lines and load network) and the detection of abnormal conditions to ensure plant integrity.
 
-**Plant State Vector**: $x(t) = [V, I, f, THD, Q, P_{loss}, SOC, SOH, T, Z]$
+**Plant & Network State Vector**: $x(t) = [V, I, f, THD, Q, P_{loss}, SOC, SOH, T, Z_{network}]$
 
-**Control Objectives**:
-1.  **State Estimation**: High-fidelity tracking of internal electrochemical and electrical states to inform the digital twin.
-2.  **Fault Detection**: Minimize the latency between fault occurrence and detection using residual-based monitoring derived from digital twin comparisons.
-3.  **Sustainability (MST Derivation)**: Determine the optimal operating parameters under which system utilization satisfies the Minimum Sustainable Throughput (MST) boundary.
+**Monitoring Objective**: To ensure system visibility and integrity under stochastic noise and fault conditions while identifying opportunities for improved real power consumption.
+
+**Optimal Sustainability Analysis**: To determine the critical system parameters and operating bounds under which plant operation becomes economically and physically sustainable (MST derivation).
 
 ### 2.1 Residual-Based Fault Detection
 Rather than simple load prediction, the system estimates deviations from expected behavior using digital twin residuals:
@@ -196,24 +195,24 @@ Where each term represents a distinct energy channel:
 *   **$P_{dump}$ (Safety Dissipation Sink)**: A controlled failure absorption channel (e.g., resistive dump loads) activated when the battery or load is saturated.
 *   **$P_{loss}$ (Physical Inefficiency)**: Unavoidable conduction and switching losses.
 
-**2.2 Optimization Framework**
-The system optimizes a flow partition policy $\pi: P_{solar}(t) \rightarrow \{P_{load}, P_{bat}, P_{reactive}, P_{dump}\}$ subject to stability, electrochemical, and availability constraints.
+2.2 Estimation & Sustainability Framework
+The framework estimates the flow partition $\pi: P_{solar}(t) \rightarrow \{P_{load}, P_{bat}, P_{reactive}, P_{dump}\}$ subject to stability, electrochemical, and availability constraints.
 
-**Optimal Energy Dispatch Objectives:**
+**Optimal Sustainability Objectives:**
 The central goal is to **Maximize Plant Utilization** ($U(t)$):
 $\max U(t) = P_{load}(t) + P_{battery\_use}(t)$
 
 **Subject to:**
 1.  **Economic Viability (Sustainability Constraint)**: $U(t) \ge MST(t)$
-2.  **System Availability**: $\mathbb{P}(\text{instability}) \le \epsilon$ (enforcing a "no collapse" manifold constraint).
-3.  **Degradation Constraint**: $\Delta SOH(t) \le \epsilon_{SOH}$ (minimizing battery and PCU wear).
+2.  **System Availability**: $\mathbb{P}(\text{instability}) \le \epsilon$ (enforcing a "no collapse" monitoring manifold).
+3.  **Degradation Constraint**: $\Delta SOH(t) \le \epsilon_{SOH}$ (characterizing battery and PCU wear).
 4.  **Energy Utilization Efficiency**: $\eta = \frac{\int P_{load}(t) dt}{\int P_{solar}(t) dt}$
 
 **2.3 MST as an Operating Boundary**
-The MST concept defines three distinct operating regions:
-1.  **Unhealthy Region ($pU(t) < C_{opex}$)**: The plant is economically unviable. Controller actions include increasing utilization, reducing avoidable losses, or investigating persistent faults.
+The MST concept defines three distinct operating regions for monitoring:
+1.  **Unhealthy Region ($pU(t) < C_{opex}$)**: The plant is economically unviable. Diagnostic actions include identifying avoidable losses or investigating persistent faults.
 2.  **Normal Manifold**: Standard operating region where the focus is on maximizing $\eta_{plant}$.
-3.  **Stress Region**: High utilization risking accelerated degradation. Controller actions include limiting stress, absorbing/rejecting excess energy, and maintaining stability margins.
+3.  **Stress Region**: High utilization risking accelerated degradation. Monitoring focuses on stress limits and stability margins.
 
 ### 2.4 Representation Loads & Fault Injection
 The physical model incorporates realistic utility-scale loads, including inductive (R-L) components to simulate reactive power demand and harmonic coupling. A fault injection framework enables the simulation of impedance shifts, efficiency drops, and sensor drift to validate the survivability logic.
@@ -225,6 +224,6 @@ Stability is evaluated across three primary dimensions:
 3.  **Spectral Stability**: Harmonic suppression and switching noise containment.
 
 3. RESEARCH SCOPE DECOMPOSITION
-This research maintains a clean separation between the physical plant and the partitioning algorithms:
+This research maintains a clean separation between the physical plant and the diagnostic algorithms:
 *   **Fixed Power Plant Model**: The NFPP Cell (DFN-informed electro-thermal proxy) and Utility-Scale Power Conditioning architecture are treated as the static environment.
-*   **Variable Energy Dispatch Layer**: The core contribution lies in the real-time partitioning of stochastic power into physically constrained sinks while maintaining a stability manifold and minimizing degradation.
+*   **Variable Diagnostic Layer**: The core contribution lies in the real-time estimation and fault detection of stochastic power partitions into physically constrained sinks while identifying sustainability manifolds.
