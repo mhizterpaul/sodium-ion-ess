@@ -1,229 +1,44 @@
-# DFN-Based Optimization of NFPP Sodium-Ion Cells for Integrated Plant-Level Control in Solar–BESS Microgrids
+# DFN-Based Co-Optimization of NFPP Sodium-Ion Cells and Model-Informed Energy Dispatch in Hybrid Solar–Battery Energy Storage Systems
 
 ## Methodology
 
-Base Cell Model (Literature-Aligned NFPP Sodium-Ion Twin System)
-1. Electrochemical Core (DFN-Compatible Reaction)
-The sodium iron pyrophosphate (NFPP) cathode operates via reversible sodium intercalation:
-Na₂FePO₄P₂O₇ ⇌ NaₓFePO₄P₂O₇ + (2 − x)Na⁺ + (2 − x)e⁻
-Theoretical specific capacity: ~95–100 mAh g⁻¹, consistent with reported polyanionic NFPP sodium-ion cathode systems used in pouch-scale prototypes.
-2. Cathode Electrode Architecture (Composite Design)
-NFPP cathodes in practical sodium-ion full cells follow a carbon–binder–domain composite structure processed using N-methyl-2-pyrrolidone (NMP)-based slurry casting.
-Fixed composition:
-	Sodium iron pyrophosphate (NFPP) active material: 85 wt% 
-	Conductive carbon additive (carbon black / acetylene black): 8 wt% 
-	Binder: polyvinylidene fluoride (PVDF): 7 wt% 
-This structure reflects standard aluminum current collector-based cathodes used in sodium-ion pouch cells with high-density electrode compaction.
-3. Anode Design (Hard Carbon System)
-Hard carbon anodes are implemented as disordered carbon networks with nanopore and turbostratic domains enabling sodium storage through adsorption, intercalation, and pore filling mechanisms.
-Fixed formulation:
-	Hard carbon active material: 88 wt% 
-	Conductive carbon additive: 6 wt% 
-	Binder: polyvinylidene fluoride (PVDF): 6 wt% 
-Practical specific capacity: 250–300 mAh g⁻¹, consistent with full-cell hard carbon sodium storage behavior.
-4. Electrolyte System (Carbonate-Based Sodium Salt System)
-The electrolyte follows a standard sodium-ion full-cell carbonate formulation:
-	Sodium hexafluorophosphate (NaPF₆): 1.0 molar concentration 
-	Sodium difluoro(oxalato)borate (NaDFOB): 0.2 molar concentration 
-	Solvent system: ethylene carbonate and propylene carbonate in 1:1 volumetric ratio 
-	Ionic conductivity: ~10 mS cm⁻¹ at 25°C 
-5. Electrolyte Additive System (Interphase Engineering)
-Interfacial stability is controlled using electrolyte additives that regulate both solid electrolyte interphase and cathode electrolyte interphase formation:
-	Fluoroethylene carbonate (FEC): 3 wt%
-→ promotes stable solid electrolyte interphase (SEI) formation on the hard carbon anode 
-	Vinylene carbonate (VC): 2 wt%
-→ enhances SEI uniformity and suppresses continuous electrolyte decomposition 
-	Sodium difluoro(oxalato)borate (NaDFOB): functions as both co-salt and cathode electrolyte interphase (CEI) stabilizer 
-The SEI is a passivation layer formed on the anode that regulates sodium-ion transport and prevents continuous electrolyte decomposition, while the CEI stabilizes cathode surface reactions and mitigates structural degradation.
-6. Pouch Cell Mechanical Architecture (Stacked Design)
-The full cell follows a stacked pouch configuration consistent with sodium-ion prototype manufacturing systems:
-	Form factor: stacked Z-fold pouch cell architecture 
-	Nominal voltage: 3.0–3.2 volts 
-	Target capacity class: 10 ampere-hour design point 
-Layer stack:
-	Cathode current collector: aluminum foil (~15 micrometers) 
-	Anode current collector: copper foil (~10 micrometers) 
-	Separator: polyolefin trilayer membrane (~20 micrometers) 
-	External casing: poly-based moisture barrier (no aluminum laminate)
-	Inner sealant: polypropylene-based sealing layer 
+### 1. Base Cell Model (Literature-Aligned NFPP Sodium-Ion Twin System)
+The electrochemical behavior is resolved using a Doyle-Fuller-Newman (DFN) framework implemented in PyBaMM. This captures the coupled evolution of State of Charge (SOC), State of Health (SOH), and heat generation.
 
-Base Model Validation Framework 
-1. Electrochemical–Thermal Driver Model
-The cell behavior is first resolved using a DFN-based electrochemical framework implemented in PyBaMM.
-This model captures the coupled evolution of:  state of charge (SOC) trajectory, state of health (SOH) degradation trajectory, heat generation rate Q(t)arising from reaction, ohmic, and polarization losses 
-These quantities define the internal energetic state of the system under charge–discharge operation.
-2. Thermal Field Model (Heat Transport)
-The generated heat Q(t)is propagated through the cell using a thermal partial differential equation formulation implemented in PyBaMM thermal modules.
-This produces the spatial–temporal temperature field:  T(x,t)for spatially resolved thermal analysis or T(t) in lumped approximation for reduced-order cases 
-3. Thermoelastic Strain-Based Structural Integrity Model
-The temperature field T(x,t)serves as the primary excitation for the mechanical response of the electrode–electrolyte–interphase system. The structural behavior is modeled as a reduced-order thermoelastic continuum implemented in FEniCSx.
-The continuum consists of electrode phases, binder matrix, electrolyte, and SEI/CEI interphases. The model focuses on deformation-producing strain evolution under coupled electrochemical–thermal loading.
-3.1 Deformation-producing strain drivers
-Strain-inducing expansion in the continuum is governed by:
-thermal expansion driven by spatial–temporal temperature gradients T(x,t)generated by:  reaction (entropic) heat, ohmic (Joule) heating in electrodes and electrolyte, charge-transfer (activation) losses, concentration polarization losses 
-SOC-driven expansion from reversible insertion/deinsertion
-SOH-driven drift in stiffness and expansion response
-These mechanisms collectively define deformation loading across all phases of the continuum.
-3.2 Structural failure criterion (critical strain envelope)
-Structural integrity is not evaluated over the full strain field. Instead, only the lower-bound failure condition is retained:
-failure is triggered at the critical strain threshold envelope
-defined as the minimum strain level at which irreversible deformation initiates
-The model evaluates: ε_"crit" =min⁡("strain distribution at damage initiation")
-Failure occurs when local deformation-producing strain exceeds this critical envelope in any continuum phase.
-	Structural response metric (cycle–time deformation mapping)
-The structural output is expressed as a reduced endurance response under strain loading:  strain intensity evolution ε_"int"  (t), threshold cycle–time response under varying strain intensity levels (n_"crit" ," " t_"crit" )=f(ε_"int"  )
+### 2. DFN-Based NFPP Cell Optimization Framework
+A hierarchical Material-Structural framework optimizes the NFPP-based sodium-ion cells.
+- **Design Space**: Structural parameters (thickness, porosity, particle size) and material parameters (dopants, electrolyte composition).
+- **Objectives**: Energy capacity, power capability, and thermo-mechanical stability.
 
-where: n_"crit" = cycles to onset of irreversible deformation, t_"crit" = time to onset under operating profile, ε_"int" = applied or induced strain intensity 
-This defines the deformation endurance boundary of the continuum under coupled electrochemical–thermal loading.
+### 3. Model-Informed Energy Dispatch (Power Plant Framework)
+The system is modeled as a real-time partitioning of stochastic solar power into physically constrained sinks.
 
-### DFN-Based NFPP Cell Optimization Framework
-Methodological Scope Statement
-This work presents a multiphysics optimization framework for NFPP-based sodium-ion cells, where material variation is restricted to dopant-level and electrolyte (salt/solvent) chemistry, coupled with structural and thermal co-optimization.
-
-Objective Definition
-The cell design is optimized using a hierarchical Material-Structural framework. The primary objective is to discover chemistry modifications (dopants/salts/solvents) compatible with the already-validated NFPP architecture while simultaneously fine-tuning structural parameters. Cost reduction and performance gains.
-
-    **Design Space:**
-*   **Structural Parameters ($\theta_s$):** Electrode thickness ($L_c, L_a$), porosity ($\epsilon_c, \epsilon_a, \epsilon_{sep}$), tortuosity ($\tau$), active material loading and particle size ($r_p$).
-*   **Material Parameters ($\theta_m$):** NFPP fraction, conductive carbon fraction, and electrolyte composition (concentration/salts)
-
-1. Stage A-C: Layered Material Mapping & Physics Framework
-This phase resolves performance properties for chemistry modifications using a decoupled architecture: a **Material Mapping Engine** for data resolution and a **Physics Layer** for property-to-parameter transformation.
-*   **Decoupled Mapping Engine:** The framework implements a prioritized resolution flow (OQMD Exact $\rightarrow$ MP Exact $\rightarrow$ Class Baselines) for a fixed candidate space (Mn/Cr/Ni dopants, NaBOB/NaTCP salts, MTMS functionalization). Strict stability-sorting ensures ground-state accuracy.
-*   **Physics Channel Models:** Performance deltas are derived through channel-specific physics models: Nernstian proxies for voltage shifts ($ΔV \propto -ΔE_f$), exponential thermal activation mapping for conductivity ($\sigma \propto \exp(-E_g/2kT)$), and interphase kinetic models for SEI growth, all scaled by a bounded stability realization factor.
-*   **Electrolyte & Fluorine Reduction:** Selection of non-fluorinated salts to reduce environmental burden and cost. Primary candidates include **NaBOB** (Sodium bis(oxalato)borate) for stability and **NaTCP** (Sodium tricyanomethanide) for high performance.
-*   **Electrode Doping:** Fe-site doping for cathodes using **Cr** (Cr³⁺ stabilizer), **Mn** (voltage booster), and **Ni** is evaluated via sensitivity-based optimization.
-*   **Alkyl Silane Functionalization:** Implementation of hard carbon electrode functionalization using **methyltrimethoxysilane (MTMS)**. This process replaces surface –OH groups with –Si–O–R groups on the hard carbon electrode, increasing hydrophobicity and promoting a more uniform SEI layer. The model accounts for reduced SEI kinetics (slower growth and lower irreversible capacity fade), slower interfacial resistance growth over cycles, and optimized exchange current density resulting from improved surface wetting and local ion accessibility.
-
-2. Stage D: Electrochemical Projection Layer
-Selected material modifications are translated into DFN-compatible perturbations through a physics-based parameter update stage rather than a simple multiplicative rescaling. For each candidate material pair, the workflow computes thermodynamic, transport, kinetic, and structural deltas, and applies them to the baseline parameter set using the implementation's transform routine:
-$\theta' = \mathcal{T}(\theta_{base}, \Delta \theta_{material})$
-where $\mathcal{T}$ denotes the parameter-mapping step used to preserve consistency with the calibrated DFN model.
-
-3. Stage E-F: Sensitivity-Driven Optimization & Validation
-The projected design space ($\theta = [\theta_s, \theta_m]$) is explored with a hierarchical workflow that combines sensitivity screening, objective-specific GA refinement, and expensive stability filtering. In the implementation, the design vector is first perturbed around a nominal point to estimate the Jacobian of the energy, power, and stability responses; only the most influential variables for each objective are retained for optimization instead of searching the full design space at once.
-*   **Phase 1: Sensitivity Screening:** For each material combination, the code computes the Jacobian of the three objective responses around the nominal design, normalizes the sensitivity magnitudes, and keeps only the variables whose normalized influence exceeds the objective-specific threshold (approximately 50% of the largest sensitivity).
-*   **Phase 2: Objective-Specific Optimization:** Three separate single-objective searches are executed with a pymoo genetic algorithm (GA) on the reduced active-variable sets. Each objective is evaluated from DFN-based metrics and scaled using a baseline reference value; infeasible configurations are penalized, including thermal-limit violations and the electrode-thickness ordering constraint.
-*   **Phase 3: Candidate Filtering:** The optimized candidates are re-evaluated with the expensive thermo-mechanical stability solver. Only designs that pass the PDE-based strain check remain eligible for ranking.
-*   **Phase 4: Final Design Composition:** Among the retained candidates, the point with the highest stability score is selected as the dominant design, and the final representative point is formed by blending this best candidate with the mean of the valid set using an 80/20 weighting to improve robustness.
-*   **Phase 5: Validation:** The selected configuration is re-simulated with the DFN workflow, and the final outputs include the chosen material pair, representative design vector, sensitivity matrix, and performance metrics used for downstream assessment. While this work focuses on a foundational design space, the cell architecture remains amenable to further performance enhancement via composite electrode structuring, advanced pore network engineering, perturbing other dopant sites (beyond the Fe-site), and exploring a broader range of electrolyte systems (solvents and additives) to further enhance cycle life and energy density. The current optimization scope is intentionally streamlined to accommodate the computational constraints of the DFN solver while effectively demonstrating the viability of physics-based optimization for enhancing the cost-efficiency and performance of sodium-ion energy storage systems.
-* **Computed cell-level performance metrics include:**  Energy capacity (kWh), Nominal voltage (V), Continuous current (A), Peak current (A), Charge time (h or min under rated C-rate), Power capability (kW or C-rate equivalent), Cycle life (cycles to end-of-life under defined SOH threshold) 
-
-Metric	Baseline	Optimized
-Energy density	140 Wh/kg	155–165 Wh/kg
-Cycle life	5000	8000–9000
-		
-ESS Unit Model: Multiphysics Digital Twin
-The ESS is implemented as a high-fidelity digital twin coupling electrochemical, thermal, fluid, and mechanical domains.
-
-1. PHYSICAL POWER PLANT MODEL
-The plant model represents the physical hardware of the 16S1P sodium-ion battery pack and its associated infrastructure.
-
-1.1 Cell Configuration & Packaging
-*   **Topology:** 16S1P (48V nominal, 10Ah) organized into four 4-cell packs.
-*   **Heterogeneity:** Stochastic parameter variation ($\pm 2-5\%$ capacity, $\pm 1-3\%$ resistance) to model real-world manufacturing spread.
-*   **Casing:** Poly-material moisture barrier (aluminum-free) with no secondary coating.
-*   **Coating Thickness:** Specified at 50–150 $\mu$m, governing internal thermal conductance.
-*   **Internal Dynamics:** Core-casing distributed thermal nodes with DFN-informed concentration states ($c_s, c_e$) and 2-RC polarization branches.
-
-**Thermal Node Topology:**
-*   Cell Core (heat source) → Cell Casing (poly) → Ambient (convection).
-
-1.3 Microgrid Capacity & Modeling
-The microgrid integrates diverse generation and storage assets to ensure reliable energy delivery.
-
-*   **Solar PV Subsystem**:
-    *   **Model**: Mono-crystalline Silicon PV (High-efficiency 250W modules).
-    *   **Configuration**: 400 modules in a series-parallel array (100 kWp nameplate capacity).
-    *   **Inverter**: Central 100kW three-phase grid-tied inverter with MPPT.
-*   **Primary Generation Array**:
-    *   **Capacity**: 50 kW continuous generation capacity.
-    *   **Role**: Primary dispatchable energy asset providing a stable baseline power to complement the stochastic solar subsystem.
-*   **Battery Energy Storage System (BESS)**:
-    *   **Capacity**: 100 kWh total energy, 50 kW power rating.
-    *   **Core Unit**: 16S1P NFPP Sodium-Ion pouch-cell modules (48V nominal, 10Ah).
-    *   **Configuration**: 208 modules (packs) connected in a series-parallel arrangement to achieve the 100 kWh nameplate capacity.
-    *   **Coupling**: AC-coupled via dedicated utility-scale BESS Power Conditioning Units (PCUs).
-
-1.4 Utility-Scale Power Conditioning & Interconnection
-The interface layer regulates high-power bidirectional energy flow and Point of Common Coupling (PCC) stability.
-*   **Architecture**: Multi-string Central Inverter → LV/MV Step-up Transformer → MV Switchgear → Utility Grid.
-*   **Power Conditioning Unit (PCU)**: Four-quadrant utility-scale inverter (150 kVA) enabling independent active ($P$) and reactive ($Q$) power control.
-*   **Interconnection**: 11kV/415V three-phase delta-wye transformer for galvanic isolation and grid impedance matching.
-*   **Protection**: Integrated MV reclosers, surge arresters, and anti-islanding relays at the PCC.
-
-1.5 Power Plant Instrumentation & Monitoring
-The system integrates utility-scale monitoring to ensure compliant dispatch and stability.
-*   **BESS Data Interface**: Aggregated data link to internal battery management units providing real-time state estimates (SOC, SOH, and internal resistance).
-*   **Power Quality Analyzers**: PCC-mounted analyzers for total harmonic distortion (THD) monitoring and phase-angle tracking.
-*   **Fault Management**: Utility-scale protective relaying (ANSI 50/51, 27/59) for overcurrent and voltage-out-of-bounds containment.
-
-1.6 Utility-Scale ESS Enclosure Dimensions
-The integrated BESS unit, housing 208 modular 16S1P packs, the utility-scale PCU, and thermal management systems, is designed with the following external dimensions (20ft ISO container scale):
-*   **Length:** 6,058 mm (Standard 20ft container length).
-*   **Width:** 2,438 mm (Standard 20ft container width).
-*   **Height:** 2,591 mm (Standard 20ft container height).
-
-2. Model-Informed Plant Fault Detection, Network State Estimation, and Sustainability Framework (Core Contribution)
-The proposed framework provides diagnostic and estimation capabilities for BESS-Solar microgrids. This is an analytical and monitoring layer rather than an active control system. The focus is on real-time estimation of the network state (equivalent impedance and states of distribution lines and load network) and the detection of abnormal conditions to ensure plant integrity.
-
-**Plant & Network State Vector**: $x(t) = [V, I, f, THD, Q, P_{loss}, SOC, SOH, T, Z_{network}]$
-
-**Monitoring Objective**: To ensure system visibility and integrity under stochastic noise and fault conditions while identifying opportunities for improved real power consumption.
-
-**Optimal Sustainability Analysis**: To determine the critical system parameters and operating bounds under which plant operation becomes economically and physically sustainable (MST derivation).
-
-### 2.1 Residual-Based Fault Detection
-Rather than simple load prediction, the system estimates deviations from expected behavior using digital twin residuals:
-$r(t) = y(t) - \hat{y}(t|x)$
-where $y(t)$ are measured variables and $\hat{y}$ is the digital twin prediction. The fault indicator $F(t) = ||r(t)||_W$ triggers diagnostic actions for inverter faults, thermal abnormalities, or battery degradation events.
-
-### 2.2 Plant Efficiency Optimization
-Efficiency is redefined as the ratio of useful plant power to total available power:
-$\eta_p = \frac{P_{useful\_plant}}{P_{available}}$
-The controller minimizes $P_{loss} = P_{inv} + P_{line} + P_{battery} + P_{thermal} + P_{harmonic}$ by optimizing flow partitions and minimizing unnecessary dissipation.
-
-**2.1 Fundamental Energy Decomposition**
-The system controls the partition of solar power:
+#### 3.1 Fundamental Energy Decomposition
+We control the partition:
 $P_{solar}(t) = P_{load}(t) + P_{bat}(t) + P_{reactive}(t) + P_{harmonic}(t) + P_{dump}(t) + P_{loss}(t)$
 
 Where each term represents a distinct energy channel:
-*   **$P_{load}$ (Useful Real Power)**: Energy consumed by the system load. The primary objective is to maximize this delivery.
-*   **$P_{bat}$ (Electrochemical Buffering)**: Acts as a state transition constraint actuator, not merely storage scheduling. It is limited by instantaneous SOC, SOH, and thermal states.
-*   **$P_{reactive}$ (Grid-Forming Stability)**: Represents electromagnetic field support for voltage stability ($Q(t) \neq 0$). It is used to damp oscillations and regulate transient responses.
-*   **$P_{harmonic}$ (Unwanted Spectral Energy)**: Inverter switching distortion and nonlinear load coupling. This is treated as a penalty state to be minimized.
-*   **$P_{dump}$ (Safety Dissipation Sink)**: A controlled failure absorption channel (e.g., resistive dump loads) activated when the battery or load is saturated.
-*   **$P_{loss}$ (Physical Inefficiency)**: Unavoidable conduction and switching losses.
+1. **$P_{load}$ (Useful real power delivery)**: Energy consumed by system load. Primary objective is to maximize this.
+2. **$P_{bat}$ (Electrochemical buffering energy)**: State transition constraint actuator (limited by SOC, SOH, and thermal state).
+3. **$P_{reactive}$ (Grid-forming stability energy)**: Electromagnetic field support for voltage stability. $Q(t) \neq 0 \Rightarrow$ voltage stability improvement.
+4. **$P_{harmonic}$ (Unwanted spectral energy)**: Inverter switching distortion and nonlinear load coupling. Minimized as a penalty state.
+5. **$P_{dump}$ (Safety dissipation sink)**: Controlled failure absorption channel (resistive dump loads) used when battery/load are saturated.
+6. **$P_{loss}$ (Unavoidable physical inefficiency)**: Conduction and switching losses (uncontrollable).
 
-2.2 Estimation & Sustainability Framework
-The framework estimates the flow partition $\pi: P_{solar}(t) \rightarrow \{P_{load}, P_{bat}, P_{reactive}, P_{dump}\}$ subject to stability, electrochemical, and availability constraints.
+#### 3.2 Optimization Objectives
+The flow partition policy $\pi: P_{solar}(t) \rightarrow \{P_{load}, P_{bat}, P_{reactive}, P_{dump}\}$ is optimized to:
+1. **Maximize Useful Energy Delivery**: $\max \mathbb{E}[P_{load}(t)]$
+2. **Ensure System Availability**: $\mathbb{P}(\text{instability}) \le \epsilon$
+3. **Maximize Operational Life**: $\min \Delta SOH(t) + \Delta R_{inverter}(t)$
+4. **Energy Utilization Efficiency**: $\eta = \frac{\int P_{load}(t) dt}{\int P_{solar}(t) dt}$
 
-**Optimal Sustainability Objectives:**
-The central goal is to **Maximize Plant Utilization** ($U(t)$):
-$\max U(t) = P_{load}(t) + P_{battery\_use}(t)$
+#### 3.3 System Stability
+Stability is maintained across four dimensions:
+1. **Energy Stability**: $P_{in} \approx P_{out}$
+2. **Electrical Stability**: Voltage regulation and frequency damping.
+3. **Dynamic Stability**: Transient response timing and ramp rate control.
+4. **Spectral Stability**: Harmonic suppression and switching noise containment.
 
-**Subject to:**
-1.  **Economic Viability (Sustainability Constraint)**: $U(t) \ge MST(t)$
-2.  **System Availability**: $\mathbb{P}(\text{instability}) \le \epsilon$ (enforcing a "no collapse" monitoring manifold).
-3.  **Degradation Constraint**: $\Delta SOH(t) \le \epsilon_{SOH}$ (characterizing battery and PCU wear).
-4.  **Energy Utilization Efficiency**: $\eta = \frac{\int P_{load}(t) dt}{\int P_{solar}(t) dt}$
-
-**2.3 MST as an Operating Boundary**
-The MST concept defines three distinct operating regions for monitoring:
-1.  **Unhealthy Region ($pU(t) < C_{opex}$)**: The plant is economically unviable. Diagnostic actions include identifying avoidable losses or investigating persistent faults.
-2.  **Normal Manifold**: Standard operating region where the focus is on maximizing $\eta_{plant}$.
-3.  **Stress Region**: High utilization risking accelerated degradation. Monitoring focuses on stress limits and stability margins.
-
-### 2.4 Representation Loads & Fault Injection
-The physical model incorporates realistic utility-scale loads, including inductive (R-L) components to simulate reactive power demand and harmonic coupling. A fault injection framework enables the simulation of impedance shifts, efficiency drops, and sensor drift to validate the survivability logic.
-
-**2.4 System Stability Dimensions**
-Stability is evaluated across three primary dimensions:
-1.  **Electrical Stability**: Active voltage regulation and frequency damping.
-2.  **Dynamic Stability**: Transient response timing and ramp rate control.
-3.  **Spectral Stability**: Harmonic suppression and switching noise containment.
-
-3. RESEARCH SCOPE DECOMPOSITION
-This research maintains a clean separation between the physical plant and the diagnostic algorithms:
-*   **Fixed Power Plant Model**: The NFPP Cell (DFN-informed electro-thermal proxy) and Utility-Scale Power Conditioning architecture are treated as the static environment.
-*   **Variable Diagnostic Layer**: The core contribution lies in the real-time estimation and fault detection of stochastic power partitions into physically constrained sinks while identifying sustainability manifolds.
+#### 3.4 Minimum System Load
+$P_{min}(t) = P_{load}^{required} + P_{stability\_reserve}$
+Physics requires continuous dissipation pathways. If $P_{solar} > P_{min}$, the system activates battery absorption, dump sinks, or controlled load increases to avoid instability.

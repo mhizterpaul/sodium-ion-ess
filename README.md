@@ -1,56 +1,47 @@
-# DFN-Based Optimization of NFPP Sodium-Ion Cells for Integrated Plant-Level Control in Solar–BESS Microgrids
+# DFN-Based Co-Optimization of NFPP Sodium-Ion Cells and Model-Informed Energy Dispatch in Hybrid Solar–Battery Energy Storage Systems
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mhizterpaul/sodium-ion-ess/blob/main/src/report.ipynb)
 
-This repository implements a high-fidelity digital twin and optimization framework for Sodium Iron Pyrophosphate (NFPP) battery systems integrated with utility-scale solar-BESS microgrid control.
+This repository implements a high-fidelity digital twin and co-optimization framework for Sodium Iron Pyrophosphate (NFPP) battery systems and model-informed energy dispatch policies in hybrid solar–BESS systems.
 
 ## Research Scope
 
-### 1. Fixed Power Plant Model (Digital Twin)
-The plant environment represents the physical microgrid hardware and electrochemical dynamics:
-*   **Microgrid Assets**:
-    *   **Solar PV**: 100kWp mono-crystalline silicon array.
-    *   **Primary Generation Array**: 50kW dispatchable power asset.
-    *   **BESS**: 100kWh / 50kW AC-coupled sodium-ion storage system (208 modules).
-*   **Electrochemical Core**: 16S1P NFPP pouch-cell pack modules modeled via the Doyle-Fuller-Newman (DFN) framework.
-*   **Thermal Dynamics**: Distributed core-casing thermal nodes with natural convection and aging kinetics.
-*   **Power Conditioning**: Utility-scale PCUs with step-up transformers and MV switchgear for grid interconnection.
+### 1. DFN-Based NFPP Cell Optimization
+A hierarchical multi-stage framework for cell design enhancement:
+*   **Layered Material Mapping**: Decoupled architecture for eco-friendly salts (NaTCP, NaBOB), cathode dopants (Cr, Mn, Ni), and MTMS functionalization.
+*   **Parameter Optimization**: Hierarchical search for structural ($\theta_s$) and material ($\theta_m$) parameters using sensitivity-based Jacobian screening and Genetic Algorithms.
 
-### 2. Plant Fault Detection, Network State Estimation & Sustainability (Core Contribution)
-The primary research focus is an analytical framework that performs real-time network state estimation (distribution lines and load network) and fault detection to ensure plant integrity.
-
-**Monitoring Objective**: Ensure system visibility and integrity under noise and faults while identifying opportunities for real power improvement.
-**Optimal Sustainability**: Determine the system parameters where plant operation becomes sustainable through MST derivation.
+### 2. Model-Informed Energy Dispatch (Core Contribution)
+The primary research focus is the real-time partitioning of stochastic solar power into physically constrained sinks while maintaining a stability manifold and minimizing lifetime degradation.
 
 #### Fundamental Energy Decomposition
-Controlling the partition:
-$P_{solar}(t) + P_{array}(t) = P_{load}(t) + P_{bat}(t) + P_{reactive}(t) + P_{harmonic}(t) + P_{dump}(t) + P_{loss}(t)$
+The system controls the partition:
+$P_{solar}(t) = P_{load}(t) + P_{bat}(t) + P_{reactive}(t) + P_{harmonic}(t) + P_{dump}(t) + P_{loss}(t)$
 
-*   **$P_{load}$ (Useful Real Power)**: Maximize energy consumed by the system load.
-*   **$P_{bat}$ (Electrochemical Buffering)**: State transition constraint actuator limited by SOC, SOH, and thermal states.
+*   **$P_{load}$ (Useful Real Power)**: Energy consumed by system load (Primary objective: maximize).
+*   **$P_{bat}$ (Electrochemical Buffering)**: State transition constraint actuator (limited by SOC, SOH, thermal state).
 *   **$P_{reactive}$ (Grid-Forming Stability)**: Electromagnetic field support for voltage stability ($Q(t) \neq 0$).
-*   **$P_{harmonic}$ (Unwanted Spectral Energy)**: Penalty state representing inverter switching distortion and nonlinear coupling.
-*   **$P_{dump}$ (Safety Dissipation)**: Controlled failure absorption channel (resistive dump loads) when sinks are saturated.
+*   **$P_{harmonic}$ (Unwanted Spectral Energy)**: Minimized penalty state representing switching distortion and nonlinear coupling.
+*   **$P_{dump}$ (Safety Dissipation Sink)**: Controlled failure absorption channel (resistive dump loads) for saturation events.
 *   **$P_{loss}$ (Physical Inefficiency)**: Unavoidable conduction and switching losses.
 
 #### Optimization Objectives
-The primary goal is to **Maximize Plant Utilization**:
-$U(t) = P_{load}(t) + P_{battery\_use}(t)$
-
-*   **Sustainability Constraint (MST)**: $U(t) \ge MST(t) = \frac{C_{opex}(t)}{p(t)}$
+The flow partition policy $\pi$ is optimized to:
+*   **Maximize Useful Energy Delivery**: $\max \mathbb{E}[P_{load}(t)]$
 *   **System Availability**: $\mathbb{P}(\text{instability}) \le \epsilon$
-*   **Degradation Control**: $\min \Delta SOH(t) + \Delta R_{PCU}(t)$
+*   **Operational Life Maximization**: $\min \Delta SOH(t) + \Delta R_{inverter}(t)$
 *   **Energy Utilization Efficiency**: $\eta = \frac{\int P_{load}(t) dt}{\int P_{solar}(t) dt}$
 
-### 3. Hierarchical Optimization
-A multi-stage framework for cell design enhancement:
-*   **Layered Material Mapping**: Decoupled architecture for eco-friendly salts (NaTCP, NaBOB), cathode dopants (Cr, Mn, Ni), and MTMS functionalization.
-*   **Parameter Optimization**: Hierarchical search for structural ($\theta_s$) and material ($\theta_m$) parameters using sensitivity-based Jacobian screening and Genetic Algorithms.
+### 3. Physical Power Plant Model (Digital Twin)
+The plant environment represents the physical microgrid hardware:
+*   **Microgrid Assets**: 100kWp Solar PV, 50kW Primary Generation, and 100kWh BESS (208 modules).
+*   **Infrastructure**: Utility-scale power conditioning (150kVA PCU, Step-up transformer, MV Switchgear).
+*   **Service Main Interface**: Balanced 3-phase interface for real-time energy flow partitioning.
 
 ## Repository Structure
 
 - `src/cell_optimization/`: Material discovery engines and structural optimization scripts.
-- `src/power_plant/`: Utility-scale power plant control logic, digital twin components, and energy dispatch validation.
+- `src/power_plant/`: Utility-scale power plant components and energy dispatch logic.
 - `nfpp_sodium_ion/`: Registered PyBaMM parameter set for NFPP/Hard-Carbon chemistry.
 - `src/report.ipynb`: Orchestration notebook for the complete research pipeline.
 
@@ -70,9 +61,3 @@ Run the complete research pipeline via the Jupyter notebook:
 ```bash
 jupyter notebook src/report.ipynb
 ```
-
-## References
-
-- **Paper Title**: DFN-Based Optimization of NFPP Sodium-Ion Cells for Integrated Plant-Level Control in Solar–BESS Microgrids
-- **Core Chemistry**: Sodium Iron Pyrophosphate (NFPP) vs. Hard Carbon
-- **Modeling Framework**: PyBaMM (Electrochemical), FEniCSx (Mechanical), Simulink (Control)

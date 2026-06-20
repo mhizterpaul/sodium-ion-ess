@@ -1,10 +1,9 @@
 %% Physical Power Plant Builder
 % Ref: docs/paper.md
-% Updates: Standalone 16S1P pack and integrated power conversion digital twin.
+% Updates: Model-Informed Energy Dispatch & Service Main Partitioning
 
 function plant = build_physical_plant(params)
     % 0. Import Data from Pipeline (Mandatory Dependency)
-    % Find file relative to script location
     script_dir = fileparts(mfilename('fullpath'));
     data_file = fullfile(script_dir, 'cell_params.json');
 
@@ -23,37 +22,45 @@ function plant = build_physical_plant(params)
     end
     ssc_params = data_decoded.ssc_params;
 
-    % 1. Utility-Scale Interconnection & PCU
-    plant.pccs.type = 'Utility-Scale Power Conditioning & Interconnection';
+    % 1. Utility-Scale 3-Phase Interconnection & PCU
+    plant.pccs.type = 'Utility-Scale Balanced 3-Phase Interconnection';
     plant.pccs.pcu.type = 'central_inverter_pcu.ssc';
     plant.pccs.pcu.rating_kva = 150;
     plant.pccs.transformer.type = 'step_up_transformer.ssc';
     plant.pccs.transformer.ratio = '415V/11kV';
     plant.pccs.switchgear.type = 'mv_switchgear.ssc';
 
-    % 2. Microgrid Generation Assets
-    plant.generation.solar.model = 'Mono-crystalline PV';
+    % 2. Service Main & Energy Dispatch Interface (Point of Common Coupling)
+    % This component handles the real-time partitioning policy
+    plant.mains.model = 'service_main.ssc';
+    plant.mains.partition_channels = {
+        'P_load';     % Useful delivery
+        'P_bat';      % Electrochemical buffering
+        'P_reactive'; % Stability energy
+        'P_harmonic'; % Spectral penalty
+        'P_dump';     % Safety sink
+        'P_loss'      % Inefficiency
+    };
+
+    % 3. Microgrid Generation Assets
     plant.generation.solar.capacity_kwp = 100;
     plant.generation.primary_array.capacity_kw = 50;
 
-    % 3. Representation Loads & Fault Injection
-    plant.loads.type = 'Utility-Scale R-L Load';
+    % 4. Representation Loads & Safety Sinks
     plant.loads.model = 'utility_load.ssc';
     plant.loads.p_nom_kw = 50;
-    plant.loads.q_nom_kvar = 20;
-    plant.faults.injection_hooks = {'Impedance Shift', 'Efficiency Drop', 'Sensor Drift'};
+    plant.safety.dump_load = 'Resistive Sink (Controlled)';
 
-    % 4. Modular AC-Coupled BESS Assembly (208 Modules)
+    % 5. Modular AC-Coupled BESS Assembly (208 Modules / 100kWh)
     num_modules = 208;
     plant.bess.modules = cell(num_modules, 1);
-    plant.bess.coupling = 'AC-Coupled via BESS-PCU';
+    plant.bess.topology = '16S1P per Module (48V, 10Ah)';
 
     for m = 1:num_modules
         plant.bess.modules{m}.id = ['Module_' num2str(m)];
         plant.bess.modules{m}.type = 'nfpp_cell.ssc';
-        plant.bess.modules{m}.interface = 'central_inverter_pcu.ssc';
 
-        % Assign Pipeline-Informed Parameters (Enforced)
+        % Assign DFN-Informed Parameters from Pipeline
         plant.bess.modules{m}.R_0 = ssc_params.R_0;
         plant.bess.modules{m}.V_nom = ssc_params.V_nom;
         plant.bess.modules{m}.Q_nom = ssc_params.Q_nom;
@@ -64,13 +71,14 @@ function plant = build_physical_plant(params)
         plant.bess.modules{m}.C_th_core = ssc_params.C_th_core;
     end
 
-    % 5. Enclosure & Environment
-    plant.enclosure.type = 'Containerized Utility-Scale ESS';
-    plant.enclosure.dims = [6058, 2438, 2591]; % mm (20ft ISO)
+    % 6. Enclosure & Environment
+    plant.enclosure.type = '20ft ISO Containerized Utility-Scale ESS';
+    plant.enclosure.dims_mm = [6058, 2438, 2591];
 
-    disp('Full Hybrid Solar-Storage Power Plant Digital Twin Built:');
-    disp(['  Generation: 100kWp Solar PV + 50kW Primary Array (Data source: ', data_file, ')']);
-    disp('  BESS: 100kWh (208 Modular 16S1P Units)');
-    disp('  Loads: 50kW Resistive + 20kVAr Inductive (with Fault Injection)');
-    disp('  Architecture: Utility-Scale (PCU, Step-up XFMR, MV Switchgear) ready.');
+    disp('--- Model-Informed Power Plant Digital Twin Initialization ---');
+    disp(['  Source: ', data_file]);
+    disp(['  Service Main: ', plant.mains.model, ' (Energy Partitioning PCC)']);
+    disp(['  Generation: 100kWp Solar + 50kW Primary']);
+    disp(['  BESS: ', num2str(num_modules), ' Modular Units (100kWh Class)']);
+    disp('  Status: Ready for Dispatch Policy Optimization.');
 end
