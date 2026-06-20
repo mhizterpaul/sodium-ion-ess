@@ -1,7 +1,7 @@
 component nfpp_cell
 % NFPP Sodium-Ion Cell (Standalone Electro-Thermal Digital Twin)
 % Ref: docs/paper.md
-% Updates: Standalone thermal convection (no cooling loop)
+% Note: Parameters are derived from final_validation.json produced by the DFN optimization pipeline.
 
 nodes
     p = foundation.electrical.electrical; % +:left
