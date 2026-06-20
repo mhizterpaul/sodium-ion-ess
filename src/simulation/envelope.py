@@ -4,6 +4,7 @@ import scipy.io as sio
 import os
 import json
 from src.simulation.utilities.parameters.parameter_builder import get_parameter_values
+from src.cell_optimization.parameter_opts import ParamTransform, DESIGN_SPACE
 from src.simulation.utilities.electrochemical.pybamm_driver import ElectrochemicalThermalDriverModel
 from src.simulation.utilities.thermal.pybamm_thermal import ThermalFieldModel
 from src.simulation.utilities.mechanical.fenics_model import ThermoelasticStrainModel
@@ -14,8 +15,31 @@ class StabilityValidator:
     Uses full multiphysics Digital Twin (PyBaMM + FEniCSx).
     """
 
-    def __init__(self, base_params_updates=None):
-        self.base_updates = base_params_updates or {}
+    def __init__(self):
+        # Enforce final_validation.json dependency
+        val_path = "final_validation.json"
+        if not os.path.exists(val_path):
+            raise FileNotFoundError(f"Missing mandatory pipeline artifact: {val_path}. Run validate.py first.")
+
+        with open(val_path, "r") as f:
+            self.pipeline_data = json.load(f)
+
+        opt_data = self.pipeline_data.get("optimization")
+        if not opt_data:
+            raise KeyError(f"Invalid optimization data in {val_path}")
+
+        # Reconstruct optimized parameters using the pipeline values
+        base_params = get_parameter_values()
+        pt = ParamTransform(pybamm.ParameterValues(base_params))
+        pt.apply_physics_deltas(opt_data.get("combined_deltas_representative", {}))
+
+        design_specs = opt_data.get("design_specs_representative", {})
+        pt.apply_design_vector(
+            np.array([design_specs[k] for k in DESIGN_SPACE if k in design_specs]),
+            [k for k in DESIGN_SPACE if k in design_specs]
+        )
+
+        self.optimized_params = pt.get_parameter_values()
         self.electro_model = ElectrochemicalThermalDriverModel()
         self.thermal_model = ThermalFieldModel()
         self.mech_model = ThermoelasticStrainModel()
@@ -103,34 +127,11 @@ class StabilityValidator:
             "params": model_dict["parameter_values"]
         }
 
-    def validate_optimized_design(self, optimized_subset=None):
-        print("Validating optimized twin with full physics...")
+    def validate_optimized_design(self):
+        print("Validating optimized twin with full physics (using values from final_validation.json)...")
 
-        # Enforce final_validation.json dependency
-        val_path = "final_validation.json"
-        if not os.path.exists(val_path):
-            raise FileNotFoundError(f"Missing mandatory pipeline artifact: {val_path}")
-
-        with open(val_path, "r") as f:
-            pipeline_data = json.load(f)
-
-        val_metrics = pipeline_data.get("validation")
-        if not val_metrics:
-            raise KeyError(f"Invalid validation data in {val_path}")
-
-        design_updates = self.base_updates.copy()
-        if optimized_subset:
-            design = optimized_subset["design"]
-            design_updates.update({
-                "Positive electrode thickness [m]": design[0],
-                "Negative electrode thickness [m]": design[1],
-                "Positive electrode porosity": design[2],
-                "Negative electrode porosity": design[3],
-                "Positive particle radius [m]": design[4]
-            })
-
-        # Base Validation at 1C
-        res_1c = self.run_full_simulation(design_updates, c_rate=1.0)
+        # Base Validation at 1C using the fully optimized parameter set
+        res_1c = self.run_full_simulation(self.optimized_params, c_rate=1.0)
 
         # Envelope Sweep
         print("  Running Operating Envelope Sweep...")
@@ -187,6 +188,5 @@ class StabilityValidator:
 
 if __name__ == "__main__":
     validator = StabilityValidator()
-    mock_design = [1.2e-4, 1.2e-4, 0.3, 0.3, 1e-6]
-    results = validator.validate_optimized_design({"design": mock_design})
+    results = validator.validate_optimized_design()
     validator.export_to_matlab(results)
