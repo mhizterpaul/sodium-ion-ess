@@ -1,4 +1,4 @@
-# DFN-Based NFPP Sodium-Ion Cell Optimization and Model-Based Battery Management System Design
+# DFN-Based Co-Optimization of NFPP Sodium-Ion Cells and Model-Informed Energy Dispatch in Hybrid Solar–Battery Energy Storage Systems
 
 ## Methodology
 
@@ -116,7 +116,7 @@ Cycle life	5000	8000–9000
 ESS Unit Model: Multiphysics Digital Twin
 The ESS is implemented as a high-fidelity digital twin coupling electrochemical, thermal, fluid, and mechanical domains.
 
-1. PHYSICAL PLANT MODEL
+1. PHYSICAL POWER PLANT MODEL
 The plant model represents the physical hardware of the 16S1P sodium-ion battery pack and its associated infrastructure.
 
 1.1 Cell Configuration & Packaging
@@ -129,49 +129,91 @@ The plant model represents the physical hardware of the 16S1P sodium-ion battery
 **Thermal Node Topology:**
 *   Cell Core (heat source) → Cell Casing (poly) → Ambient (convection).
 
-1.3 Power Conversion and Conditioning System
-The interface layer regulates bidirectional energy flow and grid stability.
-*   **Topology:** AC Grid → STS → PQC → Active Rectifier → DC Link → Bidirectional DC/DC.
-*   **Grid Interface:** Static Transfer Switch (STS) for <4ms grid/island transition.
-*   **PQC:** Series-injected DVR-equivalent sag compensator for voltage sag/swell mitigation.
-*   **Conversion:** Bidirectional isolated buck-boost stage with integrated PWM and LC filtering.
+1.3 Microgrid Capacity & Modeling
+The microgrid integrates diverse generation and storage assets to ensure reliable energy delivery.
 
-1.4 Interconnects, Sensors & Faults
-*   **Busbars:** Nickel-plated copper with $I^2R$ Joule heating modeling.
-*   **Sensors:** 16-bit voltage ADCs (<2mV noise), NTC thermistors (every 2 cells), and Hall-effect current sensors.
-*   **Fault Injection:** Hooks for internal shorts, sensor drift, and converter efficiency drops.
+*   **Solar PV Subsystem**:
+    *   **Model**: Mono-crystalline Silicon PV (High-efficiency 250W modules).
+    *   **Configuration**: 400 modules in a series-parallel array (100 kWp nameplate capacity).
+    *   **Inverter**: Central 100kW three-phase grid-tied inverter with MPPT.
+*   **Primary Generation Array**:
+    *   **Capacity**: 50 kW continuous generation capacity.
+    *   **Role**: Primary dispatchable energy asset providing a stable baseline power to complement the stochastic solar subsystem.
+*   **Battery Energy Storage System (BESS)**:
+    *   **Capacity**: 100 kWh total energy, 50 kW power rating.
+    *   **Core Unit**: 16S1P NFPP Sodium-Ion pouch-cell modules (48V nominal, 10Ah).
+    *   **Configuration**: 208 modules (packs) connected in a series-parallel arrangement to achieve the 100 kWh nameplate capacity.
+    *   **Coupling**: AC-coupled via dedicated utility-scale BESS Power Conditioning Units (PCUs).
 
-1.5 ESS Unit Physical Dimensions
-The integrated ESS unit, housing the 16S1P pack and the power conversion system, is designed with the following external dimensions:
-*   **Height:** 450 mm (includes cell stack, air draft spacing, and top-mounted PCCS).
-*   **Length:** 180 mm (aligned with 130 mm cell length plus internal clearances).
-*   **Width:** 140 mm (aligned with 70 mm cell width plus enclosure thickness).
+1.4 Utility-Scale Power Conditioning & Interconnection
+The interface layer regulates high-power bidirectional energy flow and Point of Common Coupling (PCC) stability.
+*   **Architecture**: Multi-string Central Inverter → LV/MV Step-up Transformer → MV Switchgear → Utility Grid.
+*   **Power Conditioning Unit (PCU)**: Four-quadrant utility-scale inverter (150 kVA) enabling independent active ($P$) and reactive ($Q$) power control.
+*   **Interconnection**: 11kV/415V three-phase delta-wye transformer for galvanic isolation and grid impedance matching.
+*   **Protection**: Integrated MV reclosers, surge arresters, and anti-islanding relays at the PCC.
 
-2. Model-Based Battery Management System Design (Core Research Contribution)
-The BMS is designed as a high-fidelity algorithmic layer that manages the cell plant through state estimation, protection, and safety-enforced control.
+1.5 Power Plant Instrumentation & Monitoring
+The system integrates utility-scale monitoring to ensure compliant dispatch and stability.
+*   **BESS Data Interface**: Aggregated data link to internal battery management units providing real-time state estimates (SOC, SOH, and internal resistance).
+*   **Power Quality Analyzers**: PCC-mounted analyzers for total harmonic distortion (THD) monitoring and phase-angle tracking.
+*   **Fault Management**: Utility-scale protective relaying (ANSI 50/51, 27/59) for overcurrent and voltage-out-of-bounds containment.
 
-**2.1 State Estimation Layer**
-The BMS implements real-time estimation of non-measurable internal states:
-*   **SOC Estimation (UKF):** Joint estimation via Unscented Kalman Filter (UKF) utilizes a nonlinear OCV-SOC mapping and a 2-RC equivalent circuit model to track charge levels across the 16-cell string.
-*   **SOH Inference (RLS):** Recursive Least Squares (RLS) algorithms identify internal resistance growth ($R_0$ drift) to estimate capacity fade and power degradation.
-*   **Temperature Inference:** Distributed sensing combined with a lumped thermal observer provides core temperature estimates where direct sensing is unavailable.
+1.6 Utility-Scale ESS Enclosure Dimensions
+The integrated BESS unit, housing 208 modular 16S1P packs, the utility-scale PCU, and thermal management systems, is designed with the following external dimensions (20ft ISO container scale):
+*   **Length:** 6,058 mm (Standard 20ft container length).
+*   **Width:** 2,438 mm (Standard 20ft container width).
+*   **Height:** 2,591 mm (Standard 20ft container height).
 
-**2.2 Safety Enforcement & Current Arbitration**
-Core safety logic monitors and mitigates hazardous conditions:
-*   **Overcurrent in Discharge (OCD):** Protects the battery pack from excessive load current. By setting trip points (such as OCD1 and OCD2 for varying pulse durations), the pack only delivers the current it was designed to handle.
-*   **Overcurrent in Charge:** Monitors current in both directions. This protects the pack from rogue chargers that might output unsafe levels of voltage or current, which could lead to cell venting.
-*   **Temperature Monitoring:** A robust BMS should monitor temperature to prevent thermal runaway. The video highlights the importance of granularity with four specific settings:
-    *   **Over Temperature in Discharge (OTD):** Protects against overheating during high-current use.
-    *   **Over Temperature in Charge (OTC):** Ensures the pack stays cool during the charging process.
-    *   **Under Temperature in Discharge/Charge:** Prevents the battery from being used or charged in excessively cold conditions where cell chemistry might be damaged.
-*   **Short Circuit Protection (SD):** This is described as one of the most critical safety features. A short circuit can cause a massive current spike (potentially hundreds of amps), leading to rapid heating, venting, and fire. The BMS must be able to detect and isolate the battery from the load immediately upon detecting a short.
+2. Model-Informed Energy Dispatch (Core Research Contribution)
+The dispatch system is designed as a real-time partitioning engine that manages stochastic solar power into physically constrained sinks.
 
-**2.4 Control & Balancing Layer**
-*   **State Machine:** Deterministic management of Standby, Precharge, Run, and Fault states.
-*   **Cell Equalization:** Cell balancing using adaptive, SOH-aware equalization strategies to minimize cell-to-cell SOC dispersion and mitigate accelerated degradation under varying operating conditions.
-*   **Control Objective:** Determine the optimal charge-discharge trajectory given the estimated state to maximize pack performance while respecting safety, thermal, and SOC constraints.
+**Control Objective**: To ensure system stability under stochastic noise and fault conditions while simultaneously improving useful real power consumption.
+
+**Optimal Dispatch Problem**: To determine the critical system parameters and flow partition policies under which plant operation becomes economically and physically sustainable.
+
+**2.1 Fundamental Energy Decomposition**
+The system controls the partition of solar power:
+$P_{solar}(t) = P_{load}(t) + P_{bat}(t) + P_{reactive}(t) + P_{harmonic}(t) + P_{dump}(t) + P_{loss}(t)$
+
+Where each term represents a distinct energy channel:
+*   **$P_{load}$ (Useful Real Power)**: Energy consumed by the system load. The primary objective is to maximize this delivery.
+*   **$P_{bat}$ (Electrochemical Buffering)**: Acts as a state transition constraint actuator, not merely storage scheduling. It is limited by instantaneous SOC, SOH, and thermal states.
+*   **$P_{reactive}$ (Grid-Forming Stability)**: Represents electromagnetic field support for voltage stability ($Q(t) \neq 0$). It is used to damp oscillations and regulate transient responses.
+*   **$P_{harmonic}$ (Unwanted Spectral Energy)**: Inverter switching distortion and nonlinear load coupling. This is treated as a penalty state to be minimized.
+*   **$P_{dump}$ (Safety Dissipation Sink)**: A controlled failure absorption channel (e.g., resistive dump loads) activated when the battery or load is saturated and reactive control is insufficient.
+*   **$P_{loss}$ (Physical Inefficiency)**: Unavoidable conduction and switching losses.
+
+**2.2 Optimization Framework**
+The system optimizes a flow partition policy $\pi: P_{solar}(t) \rightarrow \{P_{load}, P_{bat}, P_{reactive}, P_{dump}\}$ subject to stability, electrochemical, and availability constraints.
+
+**Optimal Energy Dispatch Objectives:**
+The central goal is to **Maximize Plant Utilization** ($U(t)$):
+$\max U(t) = P_{load}(t) + P_{battery\_use}(t) + P_{dump\_equivalent}(t)$
+
+**Subject to:**
+1.  **Economic Viability (Sustainability Constraint)**: $U(t) \ge MST(t)$
+2.  **System Availability**: $\mathbb{P}(\text{instability}) \le \epsilon$ (enforcing a "no collapse" manifold constraint).
+3.  **Degradation Constraint**: $\Delta SOH(t) \le \epsilon_{SOH}$ (minimizing battery and PCU wear).
+4.  **Energy Utilization Efficiency**: $\eta = \frac{\int P_{load}(t) dt}{\int P_{solar}(t) dt}$
+
+**2.3 Minimum Sustainable Throughput (MST) & Stability Manifold**
+Sustainability and economic viability are enforced via a hard lower bound on system utilization. Let $R(t)$ be the revenue from useful energy and $C_{opex}(t)$ be the operating expenditure (maintenance, inverter losses, degradation, and auxiliary systems). The sustainability condition is defined as:
+$R(t) \ge C_{opex}(t) \Rightarrow p(t) \cdot U(t) \ge C_{opex}(t)$
+where $p(t)$ is the energy price.
+
+The system identifies the **Minimum Sustainable Throughput (MST)**:
+$MST(t) = \frac{C_{opex}(t)}{p(t)}$
+
+This value represents the minimum energy throughput rate across the plant required to avoid economic collapse. If plant usage is too low, the system becomes non-viable; if usage is too high, it faces accelerated degradation and instability risk. The dispatch policy enforces this bound while maintaining the stability reserve (reactive compensation margin, battery headroom, and transient absorption capacity). If $P_{solar}(t) > MST(t)$, the system activates controlled dissipation or storage pathways to maintain the stability manifold.
+
+**2.4 System Stability Dimensions**
+Stability is evaluated across four dimensions:
+1.  **Energy Stability**: Maintaining $P_{in} \approx P_{out}$ balance.
+2.  **Electrical Stability**: Active voltage regulation and frequency damping.
+3.  **Dynamic Stability**: Transient response timing and ramp rate control.
+4.  **Spectral Stability**: Harmonic suppression and switching noise containment.
 
 3. RESEARCH SCOPE DECOMPOSITION
-This research maintains a clean separation between the physical plant and the control algorithms:
-*   **Fixed Plant Model:** The NFPP Cell (DFN-informed electro-thermal proxy) is treated as the static environment.
-*   **Variable BMS Layer:** The core contribution lies in the design, stability, and robustness of the estimation and protection algorithms described above.
+This research maintains a clean separation between the physical plant and the partitioning algorithms:
+*   **Fixed Power Plant Model**: The NFPP Cell (DFN-informed electro-thermal proxy) and Utility-Scale Power Conditioning architecture are treated as the static environment.
+*   **Variable Energy Dispatch Layer**: The core contribution lies in the real-time partitioning of stochastic power into physically constrained sinks while maintaining a stability manifold and minimizing degradation.

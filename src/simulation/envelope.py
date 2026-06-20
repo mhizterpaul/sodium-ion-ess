@@ -2,7 +2,9 @@ import pybamm
 import numpy as np
 import scipy.io as sio
 import os
+import json
 from src.simulation.utilities.parameters.parameter_builder import get_parameter_values
+from src.cell_optimization.parameter_opts import ParamTransform, DESIGN_SPACE
 from src.simulation.utilities.electrochemical.pybamm_driver import ElectrochemicalThermalDriverModel
 from src.simulation.utilities.thermal.pybamm_thermal import ThermalFieldModel
 from src.simulation.utilities.mechanical.fenics_model import ThermoelasticStrainModel
@@ -13,11 +15,84 @@ class StabilityValidator:
     Uses full multiphysics Digital Twin (PyBaMM + FEniCSx).
     """
 
-    def __init__(self, base_params_updates=None):
-        self.base_updates = base_params_updates or {}
+    def __init__(self):
+        # Enforce final_validation.json dependency
+        val_path = "final_validation.json"
+        if not os.path.exists(val_path):
+            raise FileNotFoundError(f"Missing mandatory pipeline artifact: {val_path}. Run validate.py first.")
+
+        with open(val_path, "r") as f:
+            self.pipeline_data = json.load(f)
+
+        opt_data = self.pipeline_data.get("optimization")
+        if not opt_data:
+            raise KeyError(f"Invalid optimization data in {val_path}")
+
+        # Reconstruct optimized parameters using the pipeline values
+        base_params = get_parameter_values()
+        pt = ParamTransform(pybamm.ParameterValues(base_params))
+        pt.apply_physics_deltas(opt_data.get("combined_deltas_representative", {}))
+
+        design_specs = opt_data.get("design_specs_representative", {})
+        pt.apply_design_vector(
+            np.array([design_specs[k] for k in DESIGN_SPACE if k in design_specs]),
+            [k for k in DESIGN_SPACE if k in design_specs]
+        )
+
+        self.optimized_params = pt.get_parameter_values()
         self.electro_model = ElectrochemicalThermalDriverModel()
         self.thermal_model = ThermalFieldModel()
         self.mech_model = ThermoelasticStrainModel()
+
+    def derive_ssc_parameters(self, solution, pybamm_params):
+        """
+        Derives Simscape ECM parameters from DFN simulation results.
+        """
+        v = solution["Terminal voltage [V]"].entries
+        i = solution["Current [A]"].entries
+        t = solution["Time [s]"].entries
+
+        # 1. R0 (Ohmic): Derived from first voltage step (V_oc - V_initial) / I
+        # Use first two points to catch the instantaneous drop
+        dv = abs(v[0] - v[1])
+        di = abs(i[1])
+        R0 = dv / (di + 1e-6)
+
+        # 2. RC Branches (Heuristic extraction from overpotential curve)
+        # Total overpotential excluding Ohmic
+        v_oc = v[0]
+        eta_total = abs(v_oc - v[-1] - i[-1]*R0)
+
+        # Split into fast (R1, C1) and slow (R2, C2)
+        # R1 ~ 40% of diffusion/activation overpotential
+        R1 = 0.4 * eta_total / (di + 1e-6)
+        C1 = 2000.0 # Time constant ~ 10s
+
+        R2 = 0.6 * eta_total / (di + 1e-6)
+        C2 = 5000.0 # Time constant ~ 30s
+
+        # 3. Thermal capacitance (C_th)
+        # Sum of (Volume * Density * Cp) for all components
+        L_p = pybamm_params["Positive electrode thickness [m]"]
+        L_n = pybamm_params["Negative electrode thickness [m]"]
+        L_s = pybamm_params["Separator thickness [m]"]
+        A = pybamm_params["Electrode width [m]"] * pybamm_params["Electrode height [m]"]
+
+        rho_p = pybamm_params["Positive electrode density [kg.m-3]"]
+        rho_n = pybamm_params["Negative electrode density [kg.m-3]"]
+        cp_p = pybamm_params["Positive electrode specific heat capacity [J.kg-1.K-1]"]
+        cp_n = pybamm_params["Negative electrode specific heat capacity [J.kg-1.K-1]"]
+
+        Cth = (L_p * A * rho_p * cp_p) + (L_n * A * rho_n * cp_n)
+
+        return {
+            "R_0": float(R0),
+            "R1": float(R1), "C1": float(C1),
+            "R2": float(R2), "C2": float(C2),
+            "C_th_core": float(Cth),
+            "V_nom": float(np.mean(v)),
+            "Q_nom": float(solution["Discharge capacity [A.h]"].entries[-1])
+        }
 
     def run_full_simulation(self, updates, c_rate=1.0):
         # 1. Electrochemical-Thermal Solve
@@ -52,22 +127,11 @@ class StabilityValidator:
             "params": model_dict["parameter_values"]
         }
 
-    def validate_optimized_design(self, optimized_subset=None):
-        print("Validating optimized twin with full physics...")
+    def validate_optimized_design(self):
+        print("Validating optimized twin with full physics (using values from final_validation.json)...")
 
-        design_updates = self.base_updates.copy()
-        if optimized_subset:
-            design = optimized_subset["design"]
-            design_updates.update({
-                "Positive electrode thickness [m]": design[0],
-                "Negative electrode thickness [m]": design[1],
-                "Positive electrode porosity": design[2],
-                "Negative electrode porosity": design[3],
-                "Positive particle radius [m]": design[4]
-            })
-
-        # Base Validation at 1C
-        res_1c = self.run_full_simulation(design_updates, c_rate=1.0)
+        # Base Validation at 1C using the fully optimized parameter set
+        res_1c = self.run_full_simulation(self.optimized_params, c_rate=1.0)
 
         # Envelope Sweep
         print("  Running Operating Envelope Sweep...")
@@ -104,18 +168,25 @@ class StabilityValidator:
             "cycle_life": float(min(res_1c["endurance"]["n_crit"], 1e12)),
             "envelope_sweep": envelope,
             "robustness_passed": bool(robustness_passed),
-            "merged_params": clean_params
+            "merged_params": clean_params,
+            # Simscape-Mapped Parameters (Derived from high-fidelity DFN transient)
+            "ssc_params": self.derive_ssc_parameters(res_1c["electro"]["solution"], res_1c["params"])
         }
 
         return results
 
-    def export_to_matlab(self, results, output_path="src/bms_design/optimized_params.mat"):
+    def export_to_json(self, results, output_path="src/power_plant/cell_params.json"):
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        with open(output_path, "w") as f:
+            json.dump(results, f, indent=2)
+        print(f"Validated Model (JSON) exported to {output_path}")
+
+    def export_to_matlab(self, results, output_path="src/power_plant/optimized_params.mat"):
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         sio.savemat(output_path, {"optimized_params": results})
         print(f"Validated Model exported to {output_path}")
 
 if __name__ == "__main__":
     validator = StabilityValidator()
-    mock_design = [1.2e-4, 1.2e-4, 0.3, 0.3, 1e-6]
-    results = validator.validate_optimized_design({"design": mock_design})
+    results = validator.validate_optimized_design()
     validator.export_to_matlab(results)

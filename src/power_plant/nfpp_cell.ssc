@@ -1,7 +1,7 @@
 component nfpp_cell
 % NFPP Sodium-Ion Cell (Standalone Electro-Thermal Digital Twin)
 % Ref: docs/paper.md
-% Updates: Standalone thermal convection (no cooling loop)
+% Note: Parameters are typically assigned from final_validation.json via the model builder.
 
 nodes
     p = foundation.electrical.electrical; % +:left
