@@ -155,7 +155,6 @@ The interface layer regulates high-power bidirectional energy flow and Point of 
 1.5 Power Plant Instrumentation & Monitoring
 The system integrates utility-scale monitoring to ensure compliant dispatch and stability.
 *   **BESS Data Interface**: Aggregated data link to internal battery management units providing real-time state estimates (SOC, SOH, and internal resistance).
-*   **SCADA Integration**: Modbus/TCP interface for remote dispatch commands and high-resolution telemetry (100ms logging).
 *   **Power Quality Analyzers**: PCC-mounted analyzers for total harmonic distortion (THD) monitoring and phase-angle tracking.
 *   **Fault Management**: Utility-scale protective relaying (ANSI 50/51, 27/59) for overcurrent and voltage-out-of-bounds containment.
 
@@ -166,7 +165,11 @@ The integrated BESS unit, housing 208 modular 16S1P packs, the utility-scale PCU
 *   **Height:** 2,591 mm (Standard 20ft container height).
 
 2. Model-Informed Energy Dispatch (Core Research Contribution)
-The dispatch system is designed as a real-time partitioning engine that manages stochastic solar power into physically constrained sinks while maintaining a stability manifold.
+The dispatch system is designed as a real-time partitioning engine that manages stochastic solar power into physically constrained sinks.
+
+**Control Objective**: To ensure system stability under stochastic noise and fault conditions while simultaneously improving useful real power consumption.
+
+**Optimal Dispatch Problem**: To determine the critical system parameters and flow partition policies under which plant operation becomes economically and physically sustainable.
 
 **2.1 Fundamental Energy Decomposition**
 The system controls the partition of solar power:
@@ -183,8 +186,8 @@ Where each term represents a distinct energy channel:
 **2.2 Optimization Framework**
 The system optimizes a flow partition policy $\pi: P_{solar}(t) \rightarrow \{P_{load}, P_{bat}, P_{reactive}, P_{dump}\}$ subject to stability, electrochemical, and availability constraints.
 
-**Core Objectives:**
-The primary objective is to **Maximize Plant Utilization** ($U(t)$):
+**Optimal Energy Dispatch Objectives:**
+The central goal is to **Maximize Plant Utilization** ($U(t)$):
 $\max U(t) = P_{load}(t) + P_{battery\_use}(t) + P_{dump\_equivalent}(t)$
 
 **Subject to:**
