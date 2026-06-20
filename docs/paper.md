@@ -1,4 +1,4 @@
-# DFN-Based Co-Optimization of NFPP Sodium-Ion Cells and Model-Informed Energy Dispatch in Hybrid Solar–Battery Energy Storage Systems
+# DFN-Based Optimization of NFPP Sodium-Ion Cells for Integrated Plant-Level Control in Solar–BESS Microgrids
 
 ## Methodology
 

@@ -68,6 +68,6 @@ jupyter notebook src/report.ipynb
 
 ## References
 
-- **Paper Title**: DFN-Based Co-Optimization of NFPP Sodium-Ion Cells and Model-Informed Energy Dispatch in Hybrid Solar–Battery Energy Storage Systems.
+- **Paper Title**: DFN-Based Optimization of NFPP Sodium-Ion Cells for Integrated Plant-Level Control in Solar–BESS Microgrids
 - **Core Chemistry**: Sodium Iron Pyrophosphate (NFPP) vs. Hard Carbon
 - **Modeling Framework**: PyBaMM (Electrochemical), FEniCSx (Mechanical), Simulink (Control)
