@@ -1,7 +1,7 @@
 component service_main
 % Balanced 3-Phase Service Main (PCC)
 % Ref: docs/paper.md section 3
-% Controls the partition: P_solar = P_load + P_bat + P_reactive + P_harmonic + P_dump + P_loss
+% Controls the partition: P_solar = P_load + P_bat + P_reactive + P_harmonic + P_loss
 
 nodes
     pA = foundation.electrical.electrical; % Phase A
@@ -21,13 +21,12 @@ variables
     P_bat = {0, 'W'};
     P_reactive = {0, 'VA'};
     P_harmonic = {0, 'W'};
-    P_dump = {0, 'W'};
     P_loss = {0, 'W'};
 end
 
 equations
     % Power Partition Constraint (Conservation of Energy)
-    P_solar == P_load + P_bat + P_reactive + P_harmonic + P_dump + P_loss;
+    P_solar == P_load + P_bat + P_reactive + P_harmonic + P_loss;
 end
 
 end

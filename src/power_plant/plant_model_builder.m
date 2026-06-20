@@ -38,7 +38,6 @@ function plant = build_physical_plant(params)
         'P_bat';      % Electrochemical buffering
         'P_reactive'; % Stability energy
         'P_harmonic'; % Spectral penalty
-        'P_dump';     % Safety sink
         'P_loss'      % Inefficiency
     };
 

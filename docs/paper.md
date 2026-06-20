@@ -13,32 +13,36 @@ A hierarchical Material-Structural framework optimizes the NFPP-based sodium-ion
 ### 3. Model-Informed Energy Dispatch (Power Plant Framework)
 The system is modeled as a real-time partitioning of stochastic solar power into physically constrained sinks.
 
-#### 3.1 Fundamental Energy Decomposition
-We control the partition:
+#### 3.1 Fundamental Energy Decomposition (Core Object)
+You are controlling the partition:
 $P_{solar}(t) = P_{load}(t) + P_{bat}(t) + P_{reactive}(t) + P_{harmonic}(t) + P_{dump}(t) + P_{loss}(t)$
 
-Where each term represents a distinct energy channel:
-1. **$P_{load}$ (Useful real power delivery)**: Energy consumed by system load. Primary objective is to maximize this.
-2. **$P_{bat}$ (Electrochemical buffering energy)**: State transition constraint actuator (limited by SOC, SOH, and thermal state).
-3. **$P_{reactive}$ (Grid-forming stability energy)**: Electromagnetic field support for voltage stability. $Q(t) \neq 0 \Rightarrow$ voltage stability improvement.
-4. **$P_{harmonic}$ (Unwanted spectral energy)**: Inverter switching distortion and nonlinear load coupling. Minimized as a penalty state.
-5. **$P_{dump}$ (Safety dissipation sink)**: Controlled failure absorption channel (resistive dump loads) used when battery/load are saturated.
-6. **$P_{loss}$ (Unavoidable physical inefficiency)**: Conduction and switching losses (uncontrollable).
+Where each term is a different energy channel, not a scheduling variable.
 
-#### 3.2 Optimization Objectives
-The flow partition policy $\pi: P_{solar}(t) \rightarrow \{P_{load}, P_{bat}, P_{reactive}, P_{dump}\}$ is optimized to:
-1. **Maximize Useful Energy Delivery**: $\max \mathbb{E}[P_{load}(t)]$
-2. **Ensure System Availability**: $\mathbb{P}(\text{instability}) \le \epsilon$
-3. **Maximize Operational Life**: $\min \Delta SOH(t) + \Delta R_{inverter}(t)$
-4. **Energy Utilization Efficiency**: $\eta = \frac{\int P_{load}(t) dt}{\int P_{solar}(t) dt}$
+**Interpretation of each channel:**
+- **$P_{load}$ (Useful real power delivery)**: Energy consumed by system load. Primary objective: maximize.
+- **$P_{bat}$ (Electrochemical buffering energy)**: Not “storage scheduling”. It is a state transition constraint actuator limited by: SOC, SOH, and thermal state.
+- **$P_{reactive}$ (Grid-forming stability energy)**: Electromagnetic field support for voltage stability. Used to stabilize voltage collapse, damp oscillations, and regulate transient response. Constraint: $Q(t) \neq 0 \Rightarrow$ voltage stability improvement.
+- **$P_{harmonic}$ (Unwanted spectral energy)**: Minimized. Represents inverter switching distortion, nonlinear load coupling, and resonance effects. Treated as a penalty state.
+- **$P_{dump}$ (Safety dissipation sink)**: Used when battery/load are saturated or reactive control is insufficient. Examples: resistive dump loads, thermal diversion. A controlled failure absorption channel.
+- **$P_{loss}$ (Unavoidable physical inefficiency)**: Conduction losses, switching losses, thermal dissipation. Not controllable.
 
-#### 3.3 System Stability
-Stability is maintained across four dimensions:
-1. **Energy Stability**: $P_{in} \approx P_{out}$
-2. **Electrical Stability**: Voltage regulation and frequency damping.
-3. **Dynamic Stability**: Transient response timing and ramp rate control.
-4. **Spectral Stability**: Harmonic suppression and switching noise containment.
+#### 3.2 Optimization Objectives (Core Contribution)
+The system optimizes a flow partition policy $\pi: P_{solar}(t) \rightarrow \{P_{load}, P_{bat}, P_{reactive}, P_{dump}\}$ to maximize:
+1. **Useful energy delivery**: $\max \mathbb{E}[P_{load}(t)]$
+2. **System availability**: $\mathbb{P}(\text{instability}) \le \epsilon$ (no collapse constraint)
+3. **Operational life maximization**: $\min \Delta SOH(t) + \Delta R_{inverter}(t)$
+4. **Energy utilization efficiency**: $\eta = \frac{\int P_{load}(t) dt}{\int P_{solar}(t) dt}$
 
-#### 3.4 Minimum System Load
+#### 3.3 Minimum System Load
+This is the minimum real-power absorption required to keep the system in a stable operating manifold:
 $P_{min}(t) = P_{load}^{required} + P_{stability\_reserve}$
-Physics requires continuous dissipation pathways. If $P_{solar} > P_{min}$, the system activates battery absorption, dump sinks, or controlled load increases to avoid instability.
+Stability reserve includes: reactive compensation margin, battery headroom, and transient absorption capacity.
+Physics requires continuous dissipation pathways to avoid instability if $P_{solar}(t) > P_{min}(t)$.
+
+#### 3.4 System Stability
+Stability includes:
+1. **Energy stability**: $P_{in} \approx P_{out}$
+2. **Electrical stability**: Voltage regulation and frequency damping.
+3. **Dynamic stability**: Transient response timing and ramp rate control.
+4. **Spectral stability**: Harmonic suppression and switching noise containment.

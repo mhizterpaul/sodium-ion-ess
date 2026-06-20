@@ -1,4 +1,3 @@
-# DFN-Based Co-Optimization of NFPP Sodium-Ion Cells and Model-Informed Energy Dispatch in Hybrid Solar–Battery Energy Storage Systems
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mhizterpaul/sodium-ion-ess/blob/main/src/report.ipynb)
 
@@ -6,12 +5,7 @@ This repository implements a high-fidelity digital twin and co-optimization fram
 
 ## Research Scope
 
-### 1. DFN-Based NFPP Cell Optimization
-A hierarchical multi-stage framework for cell design enhancement:
-*   **Layered Material Mapping**: Decoupled architecture for eco-friendly salts (NaTCP, NaBOB), cathode dopants (Cr, Mn, Ni), and MTMS functionalization.
-*   **Parameter Optimization**: Hierarchical search for structural ($\theta_s$) and material ($\theta_m$) parameters using sensitivity-based Jacobian screening and Genetic Algorithms.
-
-### 2. Model-Informed Energy Dispatch (Core Contribution)
+### 1. Model-Informed Energy Dispatch (Core Contribution)
 The primary research focus is the real-time partitioning of stochastic solar power into physically constrained sinks while maintaining a stability manifold and minimizing lifetime degradation.
 
 #### Fundamental Energy Decomposition
@@ -31,6 +25,11 @@ The flow partition policy $\pi$ is optimized to:
 *   **System Availability**: $\mathbb{P}(\text{instability}) \le \epsilon$
 *   **Operational Life Maximization**: $\min \Delta SOH(t) + \Delta R_{inverter}(t)$
 *   **Energy Utilization Efficiency**: $\eta = \frac{\int P_{load}(t) dt}{\int P_{solar}(t) dt}$
+
+### 2. DFN-Based NFPP Cell Optimization
+A hierarchical multi-stage framework for cell design enhancement:
+*   **Layered Material Mapping**: Decoupled architecture for eco-friendly salts (NaTCP, NaBOB), cathode dopants (Cr, Mn, Ni), and MTMS functionalization.
+*   **Parameter Optimization**: Hierarchical search for structural ($\theta_s$) and material ($\theta_m$) parameters using sensitivity-based Jacobian screening and Genetic Algorithms.
 
 ### 3. Physical Power Plant Model (Digital Twin)
 The plant environment represents the physical microgrid hardware:
