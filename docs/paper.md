@@ -164,15 +164,15 @@ The integrated BESS unit, housing 208 modular 16S1P packs, the utility-scale PCU
 *   **Width:** 2,438 mm (Standard 20ft container width).
 *   **Height:** 2,591 mm (Standard 20ft container height).
 
-2. Model-Informed Plant Health, Energy Stability, and Fault Detection Controller (Core Contribution)
-The control layer focuses on ensuring plant energy stability and detecting abnormal operational states. The primary objective is to maintain stable energy throughput while identifying faults through high-fidelity digital twin comparisons.
+2. Model-Informed Plant Fault Detection, State Estimation, and Sustainability Controller (Core Contribution)
+The control layer focuses on real-time state estimation and the detection of abnormal operational states. The primary objective is to accurately estimate internal plant states and identify faults through high-fidelity digital twin comparisons.
 
 **Plant State Vector**: $x(t) = [V, I, f, THD, Q, P_{loss}, SOC, SOH, T, Z]$
 
 **Control Objectives**:
-1.  **Energy Stability**: Intelligence to detect and dissipate excess back EMF and surge energy via controlled dump channels. Maintaining $P_{in} \approx P_{out} + P_{bat} + P_{losses}$ balance to ensure system equilibrium and prevent technical collapse.
+1.  **State Estimation**: High-fidelity tracking of internal electrochemical and electrical states to inform the digital twin.
 2.  **Fault Detection**: Minimize the latency between fault occurrence and detection using residual-based monitoring derived from digital twin comparisons.
-3.  **Sustainability Compliance**: Ensure system utilization remains above the Minimum Sustainable Throughput (MST) to maintain economic viability.
+3.  **Sustainability (MST Derivation)**: Determine the optimal operating parameters under which system utilization satisfies the Minimum Sustainable Throughput (MST) boundary.
 
 ### 2.1 Residual-Based Fault Detection
 Rather than simple load prediction, the system estimates deviations from expected behavior using digital twin residuals:
@@ -193,7 +193,7 @@ Where each term represents a distinct energy channel:
 *   **$P_{bat}$ (Electrochemical Buffering)**: Acts as a state transition constraint actuator, not merely storage scheduling. It is limited by instantaneous SOC, SOH, and thermal states.
 *   **$P_{reactive}$ (Grid-Forming Stability)**: Represents electromagnetic field support for voltage stability ($Q(t) \neq 0$). It is used to damp oscillations and regulate transient responses.
 *   **$P_{harmonic}$ (Unwanted Spectral Energy)**: Inverter switching distortion and nonlinear load coupling. This is treated as a penalty state to be minimized.
-*   **$P_{dump}$ (Safety Dissipation Sink)**: A controlled failure absorption channel (e.g., resistive dump loads) activated when the battery or load is saturated and reactive control is insufficient.
+*   **$P_{dump}$ (Safety Dissipation Sink)**: A controlled failure absorption channel (e.g., resistive dump loads) activated when the battery or load is saturated.
 *   **$P_{loss}$ (Physical Inefficiency)**: Unavoidable conduction and switching losses.
 
 **2.2 Optimization Framework**
@@ -201,7 +201,7 @@ The system optimizes a flow partition policy $\pi: P_{solar}(t) \rightarrow \{P_
 
 **Optimal Energy Dispatch Objectives:**
 The central goal is to **Maximize Plant Utilization** ($U(t)$):
-$\max U(t) = P_{load}(t) + P_{battery\_use}(t) + P_{dump\_equivalent}(t)$
+$\max U(t) = P_{load}(t) + P_{battery\_use}(t)$
 
 **Subject to:**
 1.  **Economic Viability (Sustainability Constraint)**: $U(t) \ge MST(t)$
@@ -219,11 +219,10 @@ The MST concept defines three distinct operating regions:
 The physical model incorporates realistic utility-scale loads, including inductive (R-L) components to simulate reactive power demand and harmonic coupling. A fault injection framework enables the simulation of impedance shifts, efficiency drops, and sensor drift to validate the survivability logic.
 
 **2.4 System Stability Dimensions**
-Stability is evaluated across four dimensions:
-1.  **Energy Stability**: Maintaining $P_{in} \approx P_{out}$ balance and intelligent back-EMF suppression via controlled dissipation.
-2.  **Electrical Stability**: Active voltage regulation and frequency damping.
-3.  **Dynamic Stability**: Transient response timing and ramp rate control.
-4.  **Spectral Stability**: Harmonic suppression and switching noise containment.
+Stability is evaluated across three primary dimensions:
+1.  **Electrical Stability**: Active voltage regulation and frequency damping.
+2.  **Dynamic Stability**: Transient response timing and ramp rate control.
+3.  **Spectral Stability**: Harmonic suppression and switching noise containment.
 
 3. RESEARCH SCOPE DECOMPOSITION
 This research maintains a clean separation between the physical plant and the partitioning algorithms:

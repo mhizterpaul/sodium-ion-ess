@@ -36,14 +36,12 @@ function plant = build_physical_plant(params)
     plant.generation.solar.capacity_kwp = 100;
     plant.generation.primary_array.capacity_kw = 50;
 
-    % 3. Representation Loads, Dump Sinks & Fault Injection
+    % 3. Representation Loads & Fault Injection
     plant.loads.type = 'Utility-Scale R-L Load';
     plant.loads.model = 'utility_load.ssc';
     plant.loads.p_nom_kw = 50;
     plant.loads.q_nom_kvar = 20;
-    plant.sinks.dump_load.model = 'dump_load.ssc';
-    plant.sinks.dump_load.capacity_kw = 50;
-    plant.faults.injection_hooks = {'Impedance Shift', 'Efficiency Drop', 'Sensor Drift', 'Back-EMF Surge'};
+    plant.faults.injection_hooks = {'Impedance Shift', 'Efficiency Drop', 'Sensor Drift'};
 
     % 4. Modular AC-Coupled BESS Assembly (208 Modules)
     num_modules = 208;
