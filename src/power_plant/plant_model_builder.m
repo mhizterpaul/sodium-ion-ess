@@ -54,8 +54,7 @@ function plant = build_physical_plant(params)
         plant.bess.modules{m}.C1 = ssc_params.C1;
         plant.bess.modules{m}.R2 = ssc_params.R2;
         plant.bess.modules{m}.C2 = ssc_params.C2;
-        plant.bess.modules{m}.R_ct = ssc_params.R_ct;
-        plant.bess.modules{m}.R_diff = ssc_params.R_diff;
+        plant.bess.modules{m}.C_th_core = ssc_params.C_th_core;
     end
 
     % 4. Enclosure & Environment

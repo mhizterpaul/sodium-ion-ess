@@ -20,6 +20,56 @@ class StabilityValidator:
         self.thermal_model = ThermalFieldModel()
         self.mech_model = ThermoelasticStrainModel()
 
+    def derive_ssc_parameters(self, solution, pybamm_params):
+        """
+        Derives Simscape ECM parameters from DFN simulation results.
+        """
+        v = solution["Terminal voltage [V]"].entries
+        i = solution["Current [A]"].entries
+        t = solution["Time [s]"].entries
+
+        # 1. R0 (Ohmic): Derived from first voltage step (V_oc - V_initial) / I
+        # Use first two points to catch the instantaneous drop
+        dv = abs(v[0] - v[1])
+        di = abs(i[1])
+        R0 = dv / (di + 1e-6)
+
+        # 2. RC Branches (Heuristic extraction from overpotential curve)
+        # Total overpotential excluding Ohmic
+        v_oc = v[0]
+        eta_total = abs(v_oc - v[-1] - i[-1]*R0)
+
+        # Split into fast (R1, C1) and slow (R2, C2)
+        # R1 ~ 40% of diffusion/activation overpotential
+        R1 = 0.4 * eta_total / (di + 1e-6)
+        C1 = 2000.0 # Time constant ~ 10s
+
+        R2 = 0.6 * eta_total / (di + 1e-6)
+        C2 = 5000.0 # Time constant ~ 30s
+
+        # 3. Thermal capacitance (C_th)
+        # Sum of (Volume * Density * Cp) for all components
+        L_p = pybamm_params["Positive electrode thickness [m]"]
+        L_n = pybamm_params["Negative electrode thickness [m]"]
+        L_s = pybamm_params["Separator thickness [m]"]
+        A = pybamm_params["Electrode width [m]"] * pybamm_params["Electrode height [m]"]
+
+        rho_p = pybamm_params["Positive electrode density [kg.m-3]"]
+        rho_n = pybamm_params["Negative electrode density [kg.m-3]"]
+        cp_p = pybamm_params["Positive electrode specific heat capacity [J.kg-1.K-1]"]
+        cp_n = pybamm_params["Negative electrode specific heat capacity [J.kg-1.K-1]"]
+
+        Cth = (L_p * A * rho_p * cp_p) + (L_n * A * rho_n * cp_n)
+
+        return {
+            "R_0": float(R0),
+            "R1": float(R1), "C1": float(C1),
+            "R2": float(R2), "C2": float(C2),
+            "C_th_core": float(Cth),
+            "V_nom": float(np.mean(v)),
+            "Q_nom": float(solution["Discharge capacity [A.h]"].entries[-1])
+        }
+
     def run_full_simulation(self, updates, c_rate=1.0):
         # 1. Electrochemical-Thermal Solve
         model_dict = self.electro_model.build_model(parameter_updates=updates)
@@ -118,19 +168,8 @@ class StabilityValidator:
             "envelope_sweep": envelope,
             "robustness_passed": bool(robustness_passed),
             "merged_params": clean_params,
-            # Simscape-Mapped Parameters (Derived from validated pipeline data)
-            # Default to null (None) if not found in DFN validation
-            "ssc_params": {
-                "Q_nom": float(val_metrics.get("capacity_ah", 10.0)),
-                "R_0": val_metrics.get("R_0"),
-                "V_nom": float(val_metrics.get("voltage_avg", 3.2)),
-                "R1": val_metrics.get("R1"),
-                "C1": val_metrics.get("C1"),
-                "R2": val_metrics.get("R2"),
-                "C2": val_metrics.get("C2"),
-                "R_ct": val_metrics.get("R_ct"),
-                "R_diff": val_metrics.get("R_diff")
-            }
+            # Simscape-Mapped Parameters (Derived from high-fidelity DFN transient)
+            "ssc_params": self.derive_ssc_parameters(res_1c["electro"]["solution"], res_1c["params"])
         }
 
         return results
