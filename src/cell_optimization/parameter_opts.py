@@ -188,7 +188,7 @@ class HierarchicalOptimizer:
         self.base_params = base_params or pybamm.ParameterValues(get_parameter_values())
         options = {"SEI": "solvent-diffusion limited", "loss of active material": "stress-driven", "thermal": "lumped"}
         self.model = pybamm.lithium_ion.DFN(options)
-        self.solver = pybamm.IDAKLUSolver(rtol=1e-7, atol=1e-9, max_step_size=5.0)
+        self.solver = pybamm.IDAKLUSolver(rtol=1e-7, atol=1e-9, options={"dt_max": 5.0})
         self.sim = pybamm.Simulation(self.model, solver=self.solver)
         self.mech_model = ThermoelasticStrainModel()
 
