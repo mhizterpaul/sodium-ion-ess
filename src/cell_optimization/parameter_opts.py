@@ -299,7 +299,9 @@ def run_workflow(engine: Optional[Any] = None):
     from src.cell_optimization.chem_regularization import derive_coupled_deltas, regularize_salt_props
     if engine is None: engine = MaterialMappingEngine()
     db, bases = engine.run()
-    if not bases: return
+    if not bases:
+        logging.error("Hierarchical optimization aborted: Base material resolution failed.")
+        return None
     optimizer = HierarchicalOptimizer(engine=engine)
     print("Executing Sensitivity-Driven DFN Hierarchical Optimization (Layer 3)...")
     material_results = []
@@ -361,7 +363,9 @@ def run_workflow(engine: Optional[Any] = None):
         if final_metrics["success"]:
             material_results.append({"cat": cat, "salt": salt, "x": final_x, "metrics": final_metrics, "deltas": deltas, "jacobian": G})
 
-    if not material_results: return
+    if not material_results:
+        logging.error("Hierarchical optimization failed: No valid material candidates successfully optimized.")
+        return None
     best = max(material_results, key=lambda r: r["metrics"]["energy"])
 
     # Accurate metadata

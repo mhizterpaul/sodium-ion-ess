@@ -162,8 +162,23 @@ class MaterialMappingEngine:
 
     def _setup_session(self):
         session = requests.Session()
-        retries = Retry(total=5, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
-        session.mount("https://", HTTPAdapter(max_retries=retries))
+        # Increased backoff and added read retries to address OQMD instability (Issue 12)
+        # We explicitly retry on all sorts of errors including read timeouts.
+        retries = Retry(
+            total=8,
+            backoff_factor=3,
+            status_forcelist=[429, 500, 502, 503, 504],
+            raise_on_status=False,
+            allowed_methods=["GET"],
+            respect_retry_after_header=True
+        )
+        adapter = HTTPAdapter(max_retries=retries)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        # Added headers to avoid potential blocks
+        session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        })
         return session
 
     def _load_cache(self) -> Dict[str, Any]:
@@ -235,7 +250,8 @@ class MaterialMappingEngine:
                     "format": "json",
                     "fields": "name,delta_e,stability,band_gap,volume,natoms"
                 }
-                r = self.session.get(OQMD_URL, params=params, timeout=20)
+                # Increased timeout to 60s to handle slow OQMD phase-space queries (Issue 12.2)
+                r = self.session.get(OQMD_URL, params=params, timeout=60)
                 if r.status_code == 200:
                     data = r.json().get("data", [])
                     if data:
@@ -280,7 +296,12 @@ class MaterialMappingEngine:
         for src_name in SOURCES:
             p, src, rf = self._resolve_material(BASE_INTERFACE_FORMULA, source_override=src_name)
             if p: bases["interface"] = {"formula": rf, "properties": p, "source": src}; break
-        if not all(k in bases for k in ["cathode", "salt", "interface"]): return system, {}
+        if not all(k in bases for k in ["cathode", "salt", "interface"]):
+            missing = [k for k in ["cathode", "salt", "interface"] if k not in bases]
+            logging.error(f"Failed to resolve base materials: {missing}")
+            return system, {}
+
+        logging.info(f"Resolved base materials: {list(bases.keys())}")
         for d in DOPANTS:
             for x in [0.05, 0.1, 0.15]:
                 formula = generate_doped_formula(d, x)
@@ -302,5 +323,8 @@ class MaterialMappingEngine:
                 if p and rf not in seen:
                     system[MaterialCategory.FUNCTIONALIZATION].append(MaterialCandidate(name=name, category=MaterialCategory.FUNCTIONALIZATION, composition=rf, properties=p, provenance=src))
                     seen.add(rf); break
+        for cat in MaterialCategory:
+            logging.info(f"Resolved {len(system[cat])} candidates for {cat.name}")
+
         self._run_result = (system, bases)
         return self._run_result
