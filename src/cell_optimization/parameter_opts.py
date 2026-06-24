@@ -1,6 +1,5 @@
 import numpy as np
 import pybamm
-import logging
 import json
 import os
 from typing import Dict, Any, List, Tuple, Optional
@@ -247,7 +246,7 @@ class HierarchicalOptimizer:
 
             return True, float(stability)
         except Exception as e:
-            logging.error(f"FEM solve failed: {e}")
+            print(f"ERROR: FEM solve failed: {e}")
             return False, -1e9
 
     def compute_jacobian(self, x: np.ndarray, deltas: Dict[str, Any]) -> np.ndarray:
@@ -301,7 +300,7 @@ def run_workflow(engine: Optional[Any] = None):
     db, bases = engine.run()
     if not bases:
         err_msg = "Hierarchical optimization aborted: Base material resolution failed."
-        logging.error(err_msg)
+        print(f"ERROR: {err_msg}")
         raise RuntimeError(err_msg)
     optimizer = HierarchicalOptimizer(engine=engine)
     print("Executing Sensitivity-Driven DFN Hierarchical Optimization (Layer 3)...")
@@ -366,7 +365,7 @@ def run_workflow(engine: Optional[Any] = None):
 
     if not material_results:
         err_msg = "Hierarchical optimization failed: No valid material candidates successfully optimized."
-        logging.error(err_msg)
+        print(f"ERROR: {err_msg}")
         raise RuntimeError(err_msg)
     best = max(material_results, key=lambda r: r["metrics"]["energy"])
 

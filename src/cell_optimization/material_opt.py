@@ -3,7 +3,6 @@ import os
 import re
 import math
 import numpy as np
-import logging
 import hashlib
 from typing import List, Dict, Optional, Any, Tuple
 from dataclasses import dataclass
@@ -153,7 +152,6 @@ def ionic_radius_proxy(formula: str, structure=None) -> float:
 
 class MaterialMappingEngine:
     def __init__(self):
-        logging.basicConfig(level=logging.INFO)
         self.mp_key = os.environ.get("MP_API_KEY")
         self.cache = self._load_cache()
         self.session = self._setup_session() if requests else None
@@ -196,7 +194,7 @@ class MaterialMappingEngine:
             with open(CACHE_FILE, "w") as f:
                 json.dump(self.cache, f, indent=2)
         except IOError as e:
-            logging.warning(f"Failed to save cache: {e}")
+            print(f"WARNING: Failed to save cache: {e}")
 
     def _resolve_material(self, formula: str, source_override: Optional[str] = None, chemsys: Optional[str] = None) -> Tuple[Optional[Dict[str, float]], str, str]:
         try:
@@ -240,7 +238,7 @@ class MaterialMappingEngine:
                     else:
                         docs = mpr.materials.summary.search(formula=canonical_formula, fields=['formula_pretty', 'formation_energy_per_atom', 'energy_above_hull', 'band_gap', 'volume', 'nsites', 'structure'])
                     if docs: props, source, resolved_formula = process_docs(docs)
-            except Exception as e: logging.exception(f"MP resolution failed: {e}")
+            except Exception as e: print(f"ERROR: MP resolution failed: {e}")
 
         if props is None and self.session and (source_override == "OQMD" or source_override is None):
             try:
@@ -269,11 +267,11 @@ class MaterialMappingEngine:
                         props, source, resolved_formula = process_docs(docs)
                         source = "OQMD"
                     else:
-                        logging.info(f"OQMD returned no data for {query_composition}")
+                        print(f"INFO: OQMD returned no data for {query_composition}")
                 else:
-                    logging.error(f"OQMD request failed for {query_composition} with status {r.status_code}: {r.text[:200]}")
+                    print(f"ERROR: OQMD request failed for {query_composition} with status {r.status_code}: {r.text[:200]}")
             except Exception as e:
-                logging.exception(f"OQMD resolution failed for {canonical_formula}: {e}")
+                print(f"ERROR: OQMD resolution failed for {canonical_formula}: {e}")
 
         if props:
             self.cache[cache_key] = {"props": props, "source": source, "formula": resolved_formula}
@@ -301,10 +299,10 @@ class MaterialMappingEngine:
         if not all(k in bases for k in ["cathode", "salt", "interface"]):
             missing = [k for k in ["cathode", "salt", "interface"] if k not in bases]
             err_msg = f"Critical Failure: Failed to resolve base materials: {missing}. Aborting pipeline."
-            logging.error(err_msg)
+            print(f"ERROR: {err_msg}")
             raise RuntimeError(err_msg)
 
-        logging.info(f"Resolved base materials: {list(bases.keys())}")
+        print(f"INFO: Resolved base materials: {list(bases.keys())}")
         for d in DOPANTS:
             for x in [0.05, 0.1, 0.15]:
                 formula = generate_doped_formula(d, x)
@@ -327,7 +325,7 @@ class MaterialMappingEngine:
                     system[MaterialCategory.FUNCTIONALIZATION].append(MaterialCandidate(name=name, category=MaterialCategory.FUNCTIONALIZATION, composition=rf, properties=p, provenance=src))
                     seen.add(rf); break
         for cat in MaterialCategory:
-            logging.info(f"Resolved {len(system[cat])} candidates for {cat.name}")
+            print(f"INFO: Resolved {len(system[cat])} candidates for {cat.name}")
 
         self._run_result = (system, bases)
         return self._run_result
