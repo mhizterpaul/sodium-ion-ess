@@ -165,12 +165,13 @@ class MaterialMappingEngine:
         # Increased backoff and added read retries to address OQMD instability (Issue 12)
         # We explicitly retry on all sorts of errors including read timeouts.
         retries = Retry(
-            total=8,
-            backoff_factor=3,
+            total=10,
+            backoff_factor=4,
             status_forcelist=[429, 500, 502, 503, 504],
             raise_on_status=False,
             allowed_methods=["GET"],
-            respect_retry_after_header=True
+            respect_retry_after_header=True,
+            read=5  # Explicitly retry on read timeouts
         )
         adapter = HTTPAdapter(max_retries=retries)
         session.mount("http://", adapter)
@@ -250,8 +251,9 @@ class MaterialMappingEngine:
                     "format": "json",
                     "fields": "name,delta_e,stability,band_gap,volume,natoms"
                 }
-                # Increased timeout to 60s to handle slow OQMD phase-space queries (Issue 12.2)
-                r = self.session.get(OQMD_URL, params=params, timeout=60)
+                # Increased timeout to handle slow OQMD phase-space queries (Issue 12.2)
+                # Using tuple (connect, read) for granular control
+                r = self.session.get(OQMD_URL, params=params, timeout=(15, 120))
                 if r.status_code == 200:
                     data = r.json().get("data", [])
                     if data:
@@ -298,8 +300,9 @@ class MaterialMappingEngine:
             if p: bases["interface"] = {"formula": rf, "properties": p, "source": src}; break
         if not all(k in bases for k in ["cathode", "salt", "interface"]):
             missing = [k for k in ["cathode", "salt", "interface"] if k not in bases]
-            logging.error(f"Failed to resolve base materials: {missing}")
-            return system, {}
+            err_msg = f"Critical Failure: Failed to resolve base materials: {missing}. Aborting pipeline."
+            logging.error(err_msg)
+            raise RuntimeError(err_msg)
 
         logging.info(f"Resolved base materials: {list(bases.keys())}")
         for d in DOPANTS:

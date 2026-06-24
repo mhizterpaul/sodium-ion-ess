@@ -300,8 +300,9 @@ def run_workflow(engine: Optional[Any] = None):
     if engine is None: engine = MaterialMappingEngine()
     db, bases = engine.run()
     if not bases:
-        logging.error("Hierarchical optimization aborted: Base material resolution failed.")
-        return None
+        err_msg = "Hierarchical optimization aborted: Base material resolution failed."
+        logging.error(err_msg)
+        raise RuntimeError(err_msg)
     optimizer = HierarchicalOptimizer(engine=engine)
     print("Executing Sensitivity-Driven DFN Hierarchical Optimization (Layer 3)...")
     material_results = []
@@ -364,8 +365,9 @@ def run_workflow(engine: Optional[Any] = None):
             material_results.append({"cat": cat, "salt": salt, "x": final_x, "metrics": final_metrics, "deltas": deltas, "jacobian": G})
 
     if not material_results:
-        logging.error("Hierarchical optimization failed: No valid material candidates successfully optimized.")
-        return None
+        err_msg = "Hierarchical optimization failed: No valid material candidates successfully optimized."
+        logging.error(err_msg)
+        raise RuntimeError(err_msg)
     best = max(material_results, key=lambda r: r["metrics"]["energy"])
 
     # Accurate metadata
