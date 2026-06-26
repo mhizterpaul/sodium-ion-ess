@@ -45,7 +45,12 @@ def validate_params(pv: Dict[str, Any]):
     """Ensure physical coherence of DFN parameters (Issue 6)."""
     required = ["Nominal cell capacity [A.h]", "Positive electrode exchange-current density [A.m-2]"]
     for r in required:
-        if r not in pv or pv[r] <= 0: return False
+        if r not in pv: return False
+        val = pv[r]
+        # Handle callables for functional parameters (Issue 6 fix)
+        actual_val = val(0.5, 298.15) if callable(val) else val
+        if actual_val <= 0: return False
+
     D_p = pv["Positive particle diffusivity [m2.s-1]"]
     D_val = D_p(0.5, 298.15) if callable(D_p) else D_p
     if D_val > 1e-10: return False
