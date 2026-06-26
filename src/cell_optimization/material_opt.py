@@ -25,54 +25,13 @@ except ImportError:
     MPRester = None
 
 from nfpp_sodium_ion.src.cell_parameters.cell_alpha import get_parameter_values
-
-KT = 0.0259 # eV at 300K
-
-def compute_surrogate_properties(formula: str) -> Dict[str, Any]:
-    """Estimates material properties from composition when database searches fail (Level 4 Fallback)."""
-    try:
-        comp = Composition(formula)
-        total_atoms = sum(comp.values())
-        molar_mass = comp.weight
-
-        avg_Z = sum(el.Z * amt for el, amt in comp.items()) / total_atoms
-
-        # Mean Electronegativity
-        electronegativity = np.mean([el.X for el in comp.elements if el.X is not None])
-        if np.isnan(electronegativity):
-            electronegativity = 2.0
-
-        ionic_radius = ionic_radius_proxy(formula)
-
-        # Approximate band gap heuristic: Organics and silanes are typically insulating (high BG)
-        # We use a grounded linear model based on electronegativity and radius
-        band_gap = (0.8 * electronegativity + 0.5 * ionic_radius + 2.5)
-
-        # Approximate formation energy: simple additive proxy for stability ranking
-        # ΔHf ≈ Ecompound − Σni Ei(ref). Here we use a mass-Z weighted heuristic.
-        formation_energy = -0.02 * molar_mass - 0.1 * avg_Z
-
-        return {
-            "stability": 0.05, # Assume metastable for optimization flow
-            "formation_energy": float(formation_energy),
-            "band_gap": float(band_gap),
-            "volume_per_atom": float(molar_mass / total_atoms),
-            "uncertainty_formation_energy": 0.3,
-            "ionic_radius": float(ionic_radius),
-            "resolved_formula": formula,
-            "computed": True
-        }
-    except Exception:
-        return {
-            "stability": 0.1,
-            "formation_energy": -1.0,
-            "band_gap": 3.0,
-            "volume_per_atom": 10.0,
-            "uncertainty_formation_energy": 0.5,
-            "ionic_radius": 1.0,
-            "resolved_formula": formula,
-            "computed": True
-        }
+from src.cell_optimization.chem_regularization import (
+    KT,
+    generate_doped_formula,
+    get_oxidation_states,
+    ionic_radius_proxy,
+    compute_surrogate_properties
+)
 
 class MaterialCategory(Enum):
     CATHODE_DOPANT = auto()
@@ -106,96 +65,6 @@ class MaterialCandidate:
     composition: str
     properties: Dict[str, Any]
     provenance: str = "OQMD"
-
-def generate_doped_formula(dopant, x):
-    # Charge neutrality via Na vacancy compensation (Issue 2 fix)
-    try:
-        dopant_charge = DOPANT_CHARGES[dopant]
-        delta_q = (dopant_charge - FE_CHARGE)
-        # charge compensation via Na vacancies: each Fe site substituted by a higher valence dopant
-        # requires removing (dopant_charge - FE_CHARGE) Na+ ions.
-        # Total sites substituted = 3.0 * x
-        na_deficit = 3.0 * x * delta_q
-
-        comp = Composition({
-            "Na": 4.0 - na_deficit,
-            "Fe": 3.0 * (1.0 - x),
-            dopant: 3.0 * x,
-            "P": 4,
-            "O": 15
-        })
-        return comp.reduced_formula
-    except Exception:
-        return f"Na{4.0-x*(DOPANT_CHARGES.get(dopant,2)-2):.2f}Fe{3.0*(1.0-x):.2f}{dopant}{3.0*x:.2f}P4O15"
-
-def get_oxidation_states(comp: Composition, structure=None):
-    # fallback deterministic oxidation map (battery-relevant prior)
-    prior = {
-        "Na": 1, "O": -2, "P": 5,
-        "Fe": 2, "Mn": 2, "Cr": 3, "Ni": 2,
-        "C": 0, "Si": 4, "F": -1
-    }
-    states = {}
-    try:
-        # Always prioritize deterministic prior table first (Key constraint)
-        for el in comp.elements:
-            symbol = el.symbol
-            if symbol in prior:
-                states[symbol] = prior[symbol]
-
-        # If any elements missing from prior, use structure-based BVAnalyzer or guesses
-        missing_symbols = [el.symbol for el in comp.elements if el.symbol not in states]
-        if missing_symbols:
-            if structure:
-                try:
-                    analyzer = BVAnalyzer()
-                    decorated = analyzer.get_oxi_state_decorated_structure(structure)
-                    for s in missing_symbols:
-                        amt_dict = decorated.composition.get_el_amt_dict()
-                        if s in amt_dict:
-                            # Summing amounts might be wrong if there are multiple sites with same element but different oxi states
-                            # But Specie(symbol, oxi) needs a single oxi. We take the most common one.
-                            # Decorated structure elements are usually Specie.
-                            for sp in decorated.composition.elements:
-                                if hasattr(sp, "symbol") and sp.symbol == s:
-                                    states[s] = getattr(sp, "oxi_state", states.get(s))
-                except Exception:
-                    pass
-
-            # Secondary fallback: guesses
-            if any(s not in states for s in missing_symbols):
-                guesses = comp.oxi_state_guesses()
-                if guesses:
-                    best_guess = guesses[0]
-                    for s in missing_symbols:
-                        if s not in states and s in best_guess:
-                            states[s] = best_guess[s]
-        return states
-    except Exception:
-        return prior
-
-def ionic_radius_proxy(formula: str, structure=None) -> float:
-    """Computes a weighted average ionic radius for the composition using Specie data."""
-    try:
-        comp = Composition(formula)
-        states = get_oxidation_states(comp, structure=structure)
-
-        total_atoms = sum(comp.values())
-        avg_radius = 0.0
-        for el, count in comp.items():
-             symbol = el.symbol
-             oxi = states.get(symbol, 0)
-             try:
-                 # Deterministic radius selection logic (Issue 2.3)
-                 radius = el.average_ionic_radius if oxi == 0 else Specie(symbol, oxi).ionic_radius
-                 if radius is None:
-                     radius = el.atomic_radius
-             except Exception:
-                 radius = el.atomic_radius or 1.0
-             avg_radius += (count / total_atoms) * (radius if radius else 1.0)
-        return float(avg_radius)
-    except Exception:
-        return 1.0
 
 class MaterialMappingEngine:
     def __init__(self):
