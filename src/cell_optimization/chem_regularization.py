@@ -2,7 +2,7 @@ import re
 import math
 import numpy as np
 from typing import Dict, Set, List, Optional, Any
-from pymatgen.core import Composition, Element
+from pymatgen.core import Composition
 from pymatgen.core.periodic_table import Specie
 from pymatgen.analysis.bond_valence import BVAnalyzer
 
@@ -151,8 +151,8 @@ def compute_surrogate_properties(formula: str) -> Dict[str, Any]:
              band_gap = 0.1 # metallic/semi-metal default
 
         # 4. Formation Energy Proxy (Issue 1)
-        # Delta_chi based bond strength proxy: Ef ~ -sum(chi_diff)
-        ef_proxy = -0.5 * (avg_X - 1.5) * total_atoms / 4.0 # Heuristic scaling
+        # Returns energy per atom (eV/atom) to ensure scale invariance (Issue 1 fix)
+        ef_proxy = -0.5 * (avg_X - 1.5) / 4.0 # Heuristic scaling
 
         # 5. Stability Proxy (Issue 7) - Bond Valence Mismatch Proxy
         # High electronegativity difference often correlates with higher stability
