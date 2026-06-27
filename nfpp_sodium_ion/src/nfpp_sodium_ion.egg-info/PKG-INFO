@@ -1,9 +1,0 @@
-Metadata-Version: 2.4
-Name: nfpp_sodium_ion
-Version: 0.1.0
-Summary: NFPP Sodium-ion base parameter package for PyBaMM
-Author-email: Paul Admin <paul_admin@example.com>
-Requires-Python: >=3.8
-Requires-Dist: numpy>=1.24.0
-Requires-Dist: scipy>=1.10.0
-Requires-Dist: pybamm>=1.0.0

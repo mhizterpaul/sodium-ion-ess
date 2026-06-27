@@ -1,2 +1,0 @@
-[pybamm_parameter_sets]
-nfpp_sodium_ion = nfpp_sodium_ion:get_parameter_values
