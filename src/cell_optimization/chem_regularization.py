@@ -80,7 +80,9 @@ def get_oxidation_states(comp: Composition, structure=None):
              if abs(total_charge) > 1e-3:
                   # Simple heuristic: adjust transition metal or oxygen if discrepancy small
                   if "O" in states:
-                       states["O"] -= total_charge / comp["O"]
+                       new_oxi = states["O"] - total_charge / comp["O"]
+                       # Constrain oxygen to physical range (Issue 4.2.1)
+                       states["O"] = np.clip(new_oxi, -2.2, -0.5)
 
         return states
     except Exception:
@@ -105,9 +107,10 @@ def ionic_radius_proxy(formula: str, structure=None) -> float:
 
              try:
                  # Shannon radii depend on oxidation and coordination
-                 if oxi != 0:
+                 oxi_rounded = round(oxi)
+                 if oxi_rounded != 0:
                       # Round oxidation state to nearest integer for robust lookup (Issue 4.2)
-                      sp = Specie(symbol, round(oxi))
+                      sp = Specie(symbol, oxi_rounded)
                       try:
                           # Attempt CN-specific lookup (e.g. for transition metals)
                           # Using High Spin as common for 3d battery cathodes
@@ -118,7 +121,7 @@ def ionic_radius_proxy(formula: str, structure=None) -> float:
                           except:
                               radius = sp.ionic_radius
                  else:
-                      radius = el.average_ionic_radius
+                      radius = el.average_ionic_radius or el.atomic_radius
 
                  if radius is None: radius = el.atomic_radius
              except:

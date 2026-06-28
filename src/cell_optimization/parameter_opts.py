@@ -394,14 +394,15 @@ class HierarchicalOptimizer:
             print(f"ERROR: FEM solve failed: {e}\n{traceback.format_exc()}")
             return False, -1e9
 
-    def compute_jacobian(self, x: np.ndarray, deltas: Dict[str, Any]) -> np.ndarray:
+    def compute_jacobian(self, x: np.ndarray, deltas: Dict[str, Any]) -> Optional[np.ndarray]:
         """Computes scaled sensitivities (Layer 3) with robust failure handling."""
         eps = 1e-4
         pt = ParamTransform(self.base_params)
         pt.apply_physics_deltas(deltas); pt.apply_design_vector(x, DESIGN_SPACE)
         base_res = self.simulate(pt.get_parameter_values())
         if not base_res["success"]:
-            raise RuntimeError(f"Baseline DFN simulation failed: {base_res.get('reason')}")
+            print(f"WARNING: Baseline DFN simulation failed: {base_res.get('reason')}. Skipping candidate.")
+            return None
 
         from src.cell_optimization.chem_regularization import mechanical_stability_metric
         j_base = np.array([
@@ -471,6 +472,7 @@ def run_workflow(engine: Optional[Any] = None):
             for k, v in d.items(): deltas.setdefault(k, {}).update(v)
         x_base = np.array([np.mean(b) for b in DESIGN_BOUNDS])
         G = optimizer.compute_jacobian(x_base, deltas)
+        if G is None: continue
 
         opt_designs = []
         # Calculate baseline metrics for objective scaling
