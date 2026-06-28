@@ -109,6 +109,11 @@ class ParamTransform:
                     self.values_dict["Positive electrode OCP [V]"] = lambda sto, b=boost, f=ocp: f(sto) + b
                 else:
                     self.values_dict["Positive electrode OCP [V]"] += boost
+
+                # Shift cut-offs to preserve capacity utilization (Issue 3.3.1)
+                for cut_off in ["Lower voltage cut-off [V]", "Upper voltage cut-off [V]"]:
+                    if cut_off in self.values_dict:
+                        self.values_dict[cut_off] += boost
             if "initial_sodium_loss_delta" in d:
                 self._apply_scaling("Initial concentration in negative electrode [mol.m-3]", (1.0 + d["initial_sodium_loss_delta"]))
             if "stability_shift" in d:

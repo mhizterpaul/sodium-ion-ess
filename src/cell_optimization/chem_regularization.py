@@ -106,7 +106,8 @@ def ionic_radius_proxy(formula: str, structure=None) -> float:
              try:
                  # Shannon radii depend on oxidation and coordination
                  if oxi != 0:
-                      sp = Specie(symbol, oxi)
+                      # Round oxidation state to nearest integer for robust lookup (Issue 4.2)
+                      sp = Specie(symbol, round(oxi))
                       try:
                           # Attempt CN-specific lookup (e.g. for transition metals)
                           # Using High Spin as common for 3d battery cathodes
