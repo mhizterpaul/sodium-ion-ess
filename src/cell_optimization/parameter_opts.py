@@ -64,8 +64,8 @@ def validate_params(pv: Dict[str, Any]):
             # T: 298.15 K (STP)
             grounded_map = {
                 "c_e": 1200.0,
-                "c_s_surf": 0.5 * derived["c_max_p"],
-                "c_s_max": derived["c_max_p"],
+                "c_s_surf": 0.5 * derived.get("c_max_p", 25000.0),
+                "c_s_max": derived.get("c_max_p", 25000.0),
                 "T": 298.15,
                 "sto": 0.5
             }
@@ -167,6 +167,17 @@ class ParamTransform:
         self.values_dict.setdefault("Cell thermal expansion coefficient [m.K-1]", 1e-6)
         self.values_dict.setdefault("Number of cells connected in series to make a battery", 1)
         self.values_dict.setdefault("Number of strings connected in parallel to make a battery", 1)
+
+        # Issue 3.3.2: Robust electrochemical defaults to prevent initialization failures
+        # mid-SOC starting point is safest for unknown chemistries (Overriding defaults)
+        c_max_p = self.values_dict.get("Maximum concentration in positive electrode [mol.m-3]", 25000.0)
+        c_max_n = self.values_dict.get("Maximum concentration in negative electrode [mol.m-3]", 25000.0)
+        self.values_dict["Initial concentration in positive electrode [mol.m-3]"] = 0.5 * c_max_p
+        self.values_dict["Initial concentration in negative electrode [mol.m-3]"] = 0.5 * c_max_n
+
+        # Wide voltage safety window (will be refined by SimulationRunner if needed)
+        self.values_dict["Lower voltage cut-off [V]"] = 0.5
+        self.values_dict["Upper voltage cut-off [V]"] = 4.5
 
         # Finalize scaling using multiplicative approach (Issue 10)
         for key, factor in self.scaling_factors.items():
@@ -287,6 +298,30 @@ class SimulationRunner:
 
     def run_simulation(self, params: pybamm.ParameterValues, c_rate: float = 1.0) -> Dict[str, Any]:
         try:
+            # Issue 4.2.2: Pre-simulation initial voltage check to prevent event trigger failures
+            c_max_p = params["Maximum concentration in positive electrode [mol.m-3]"]
+            c_max_n = params["Maximum concentration in negative electrode [mol.m-3]"]
+            c_p_init = params["Initial concentration in positive electrode [mol.m-3]"]
+            c_n_init = params["Initial concentration in negative electrode [mol.m-3]"]
+
+            ocp_p_func = params["Positive electrode OCP [V]"]
+            ocp_n_func = params["Negative electrode OCP [V]"]
+
+            sto_p = c_p_init / c_max_p
+            sto_n = c_n_init / c_max_n
+
+            v_init = op = ocp_p_func(sto_p) - ocp_n_func(sto_n)
+            # Handle pybamm Symbols
+            v_init_val = float(v_init.value) if hasattr(v_init, "value") else float(v_init)
+
+            # Ensure lower cut-off is below initial voltage with safety margin
+            # We also consider the initial IR drop (estimated at ~0.5V for safety)
+            ir_drop_est = 0.5
+            v_min = params["Lower voltage cut-off [V]"]
+            if (v_init_val - ir_drop_est) <= v_min:
+                params["Lower voltage cut-off [V]"] = max(0.1, v_init_val - 1.0)
+                print(f"INFO: Relaxed lower voltage cut-off to {params['Lower voltage cut-off [V]']:.2f}V to accommodate initial OCV {v_init_val:.2f}V and IR drop")
+
             key = self._get_geometry_key(params)
             cached = self.geometry_cache.get(key)
 
