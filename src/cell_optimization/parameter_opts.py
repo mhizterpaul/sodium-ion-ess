@@ -4,6 +4,7 @@ import json
 import os
 import traceback
 import inspect
+from collections import OrderedDict
 from typing import Dict, Any, List, Tuple, Optional
 from pymoo.core.problem import Problem
 from pymoo.algorithms.soo.nonconvex.ga import GA
@@ -91,30 +92,25 @@ def validate_params(pv: Dict[str, Any]):
 
 class ParamTransform:
     def __init__(self, base_values: pybamm.ParameterValues):
+        # Always work on a fresh copy of base values (Issue 10)
         self.values_dict = dict(base_values)
+        self.scaling_factors = {}
 
     def _apply_scaling(self, key: str, factor: float):
-        original = self.values_dict.get(key)
-        if original is None: return
-        if callable(original):
-            def scaled_func(*args, f=factor, orig=original, **kwargs):
-                return orig(*args, **kwargs) * f
-            self.values_dict[key] = scaled_func
-        else:
-            self.values_dict[key] *= factor
+        self.scaling_factors[key] = self.scaling_factors.get(key, 1.0) * factor
 
     def apply_physics_deltas(self, deltas: Dict[str, Any]):
         if "thermodynamic" in deltas:
             d = deltas["thermodynamic"]
             if "voltage_boost" in d:
                 ocp = self.values_dict.get("Positive electrode OCP [V]")
+                boost = d["voltage_boost"]
                 if callable(ocp):
-                    def shifted_ocp(sto, b=d["voltage_boost"], f=ocp): return f(sto) + b
-                    self.values_dict["Positive electrode OCP [V]"] = shifted_ocp
+                    self.values_dict["Positive electrode OCP [V]"] = lambda sto, b=boost, f=ocp: f(sto) + b
                 else:
-                    self.values_dict["Positive electrode OCP [V]"] += d["voltage_boost"]
+                    self.values_dict["Positive electrode OCP [V]"] += boost
             if "initial_sodium_loss_delta" in d:
-                self.values_dict["Initial concentration in negative electrode [mol.m-3]"] *= (1.0 + d["initial_sodium_loss_delta"])
+                self._apply_scaling("Initial concentration in negative electrode [mol.m-3]", (1.0 + d["initial_sodium_loss_delta"]))
             if "stability_shift" in d:
                  self._apply_scaling("SEI reaction exchange current density [A.m-2]", np.exp(-d["stability_shift"]))
                  self._apply_scaling("Positive electrode LAM constant proportional term [s-1]", np.exp(-d["stability_shift"]))
@@ -160,11 +156,36 @@ class ParamTransform:
                 self.values_dict[name] = val
 
     def get_parameter_values(self) -> pybamm.ParameterValues:
+        # Fill in missing mechanical parameters for stress-driven LAM (Issue 14.1)
+        self.values_dict.setdefault("Negative electrode volume change", lambda sto: 0.1 * sto)
+        self.values_dict.setdefault("Positive electrode volume change", lambda sto: 0.1 * sto)
+        self.values_dict.setdefault("Cell thermal expansion coefficient [m.K-1]", 1e-6)
+        self.values_dict.setdefault("Number of cells connected in series to make a battery", 1)
+        self.values_dict.setdefault("Number of strings connected in parallel to make a battery", 1)
+
+        # Finalize scaling using multiplicative approach (Issue 10)
+        for key, factor in self.scaling_factors.items():
+            original = self.values_dict.get(key)
+            if original is None: continue
+            if callable(original):
+                self.values_dict[key] = lambda *args, f=factor, orig=original, **kwargs: orig(*args, **kwargs) * f
+            else:
+                self.values_dict[key] *= factor
+
         self.values_dict.setdefault("Cell volume [m3]", 0.13 * 0.07 * 0.01)
         self.values_dict.setdefault("Cell cooling surface area [m2]", 0.02)
         self.values_dict.setdefault("Total heat transfer coefficient [W.m-2.K-1]", 10.0)
         self.values_dict.setdefault("SEI solvent diffusivity [m2.s-1]", 2.5e-22)
         self.values_dict.setdefault("Bulk solvent concentration [mol.m-3]", 2636.0)
+
+        # Issue 14: Final sanity defaults for lumped thermal
+        self.values_dict.setdefault("Negative current collector density [kg.m-3]", 8960.0)
+        self.values_dict.setdefault("Positive current collector density [kg.m-3]", 2700.0)
+        self.values_dict.setdefault("Negative current collector specific heat capacity [J.kg-1.K-1]", 385.0)
+        self.values_dict.setdefault("Positive current collector specific heat capacity [J.kg-1.K-1]", 897.0)
+        self.values_dict.setdefault("Negative current collector thermal conductivity [W.m-1.K-1]", 401.0)
+        self.values_dict.setdefault("Positive current collector thermal conductivity [W.m-1.K-1]", 237.0)
+
         return pybamm.ParameterValues(self.values_dict)
 
 # --- INDIVIDUAL OBJECTIVE OPTIMIZER (GA) ---
@@ -217,6 +238,83 @@ class SingleObjectiveProblem(Problem):
 
         out["F"] = np.array(F); out["G"] = np.array(G_all)
 
+class GeometryCache:
+    def __init__(self, max_size: int = 32):
+        self.cache = OrderedDict()
+        self.max_size = max_size
+
+    def get(self, key: tuple):
+        if key in self.cache:
+            self.cache.move_to_end(key)
+            return self.cache[key]
+        return None
+
+    def set(self, key: tuple, value: dict):
+        if key in self.cache:
+            self.cache.move_to_end(key)
+        self.cache[key] = value
+        if len(self.cache) > self.max_size:
+            self.cache.popitem(last=False)
+
+class SimulationRunner:
+    def __init__(self, model: pybamm.BaseModel, solver_class, solver_kwargs: dict):
+        self.model = model
+        self.solver_class = solver_class
+        self.solver_kwargs = solver_kwargs
+        self.geometry_cache = GeometryCache()
+
+        # Static mesh settings
+        self.var_pts = model.default_var_pts
+        self.submesh_types = model.default_submesh_types
+        self.spatial_methods = model.default_spatial_methods
+
+    def _get_geometry_key(self, params: pybamm.ParameterValues) -> tuple:
+        # Group A parameters that affect geometry/discretisation
+        keys = [
+            "Positive electrode thickness [m]",
+            "Negative electrode thickness [m]",
+            "Separator thickness [m]",
+            "Positive particle radius [m]",
+            "Negative particle radius [m]",
+            "Typical electrolyte concentration [mol.m-3]" # Often affects geometry scaling if normalized
+        ]
+        return tuple(float(params.get(k, 0.0)) for k in keys)
+
+    def run_simulation(self, params: pybamm.ParameterValues, c_rate: float = 1.0) -> Dict[str, Any]:
+        try:
+            key = self._get_geometry_key(params)
+            cached = self.geometry_cache.get(key)
+
+            if cached:
+                # Reuse preprocessed components
+                geometry = cached["geometry"]
+                mesh = cached["mesh"]
+                disc = cached["disc"]
+            else:
+                # Rebuild from scratch
+                geometry = self.model.default_geometry
+                params.process_geometry(geometry)
+                mesh = pybamm.Mesh(geometry, self.submesh_types, self.var_pts)
+                disc = pybamm.Discretisation(mesh, self.spatial_methods)
+                self.geometry_cache.set(key, {"geometry": geometry, "mesh": mesh, "disc": disc})
+
+            # To avoid setter issues and redundant work, we manually perform the simulation
+            # steps that Simulation.solve() would normally do, but using our cached components.
+
+            # 1. Process model parameters (fast)
+            processed_model = params.process_model(self.model, inplace=False)
+
+            # 2. Discretise model using cached disc (very fast since mesh is built)
+            disc.process_model(processed_model, inplace=True)
+
+            # 3. Solve (where most time is spent)
+            # Create a fresh solver instance to avoid "already initialised" errors (Issue 10.1)
+            solver = self.solver_class(**self.solver_kwargs)
+            sol = solver.solve(processed_model, [0, 3600 / c_rate], inputs={"Current [A]": c_rate * float(params["Nominal cell capacity [A.h]"])})
+            return {"success": True, "sol": sol}
+        except Exception as e:
+            return {"success": False, "reason": f"{e}"}
+
 class HierarchicalOptimizer:
     def __init__(self, engine: Optional[Any] = None, base_params: Optional[pybamm.ParameterValues] = None):
         if engine is None:
@@ -226,14 +324,17 @@ class HierarchicalOptimizer:
         self.base_params = base_params or pybamm.ParameterValues(get_parameter_values())
         options = {"SEI": "solvent-diffusion limited", "loss of active material": "stress-driven", "thermal": "lumped"}
         self.model = pybamm.lithium_ion.DFN(options)
-        self.solver = pybamm.IDAKLUSolver(rtol=1e-7, atol=1e-9, options={"dt_max": 5.0})
-        self.sim = pybamm.Simulation(self.model, solver=self.solver)
+        solver_kwargs = {"rtol": 1e-7, "atol": 1e-9, "options": {"dt_max": 5.0}}
+        self.runner = SimulationRunner(self.model, pybamm.IDAKLUSolver, solver_kwargs)
         self.mech_model = ThermoelasticStrainModel()
 
     def simulate(self, params: pybamm.ParameterValues, c_rate: float = 1.0, return_sol: bool = False) -> Dict[str, Any]:
+        res = self.runner.run_simulation(params, c_rate)
+        if not res["success"]:
+            return res
+
         try:
-            self.sim.parameter_values = params
-            sol = self.sim.solve([0, 3600 / c_rate], inputs={"Current [A]": c_rate * float(params["Nominal cell capacity [A.h]"])})
+            sol = res["sol"]
             v, curr, t = sol["Terminal voltage [V]"].data, sol["Current [A]"].data, sol["Time [s]"].data
 
             # Energy calculation (Issue 5.1) - Discharge E is always positive
@@ -253,7 +354,7 @@ class HierarchicalOptimizer:
                  try: stresses.append(np.max(np.abs(sol[sv].data)))
                  except: pass
 
-            res = {
+            final_res = {
                 "energy": float(energy),
                 "power": float(power),
                 "T_max": float(T_max),
@@ -261,10 +362,10 @@ class HierarchicalOptimizer:
                 "success": True
             }
             if return_sol:
-                res["sol"] = sol
-            return res
+                final_res["sol"] = sol
+            return final_res
         except Exception as e:
-            return {"success": False, "reason": f"{e}"}
+            return {"success": False, "reason": f"Post-simulation processing failed: {e}"}
 
     def evaluate_stability_pde(self, params: pybamm.ParameterValues, mode: str) -> Tuple[bool, float]:
         """Stage 2: Expensive FEM thermo-mechanical solve."""
