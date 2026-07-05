@@ -32,8 +32,8 @@ class StabilityValidator:
         pt = ParamTransform(pybamm.ParameterValues(base_params))
 
         # Apply deltas (merging functionalization if present)
-        deltas = opt_data.get("combined_deltas_representative", {}).copy()
-        val_data = self.pipeline_data.get("validation", {})
+        import copy
+        deltas = copy.deepcopy(opt_data.get("combined_deltas_representative", {}))
         # Note: If validation step added more deltas or parameters, we ensure they are captured.
 
         pt.apply_physics_deltas(deltas)
@@ -197,8 +197,8 @@ class StabilityValidator:
 
         # 4. Weighted Robustness Index (Issue 14)
         def compute_robustness_index(res):
-             # R = w1*T + w2*strain + w3*SOH + w4*dV + w5*eta
-             w = [0.2, 0.4, 0.1, 0.2, 0.1]
+             # R = w1*T + w2*strain + w3*SOH
+             w = [0.3, 0.5, 0.2]
              T_max = np.max(res["electro"]["temperature"])
              strain_max = res["mechanical"]["max_strain"]
              soh_final = res["electro"]["soh_trajectory"][-1] / 100.0
