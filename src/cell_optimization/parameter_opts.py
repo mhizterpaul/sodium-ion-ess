@@ -407,14 +407,14 @@ class HierarchicalOptimizer:
         except Exception as e:
             return {"success": False, "reason": f"Post-simulation processing failed: {e}"}
 
-    def evaluate_stability_pde(self, params: pybamm.ParameterValues, mode: str) -> Tuple[bool, float]:
+    def evaluate_stability_pde(self, params: pybamm.ParameterValues, mode: str, c_rate: float = 1.0) -> Tuple[bool, float]:
         """Stage 2: Expensive FEM thermo-mechanical solve."""
-        res = self.simulate(params, return_sol=True)
+        res = self.simulate(params, c_rate=c_rate, return_sol=True)
         if not res["success"]: return False, -1e9
 
         # Call FEniCSx solver
         try:
-            mech_res = self.mech_model.solve_strain(res["sol"], params)
+            mech_res = self.mech_model.solve_strain(res["sol"], params, c_rate=c_rate)
             max_strain = mech_res["max_strain"]
             critical_strain = self.mech_model.critical_thresholds.get("NFPP", 2e-3)
             eta = max_strain / critical_strain

@@ -49,7 +49,12 @@ class OptimizationValidator:
         High-fidelity Thermo-Mechanical Solver using consolidated fenics_model.
         """
         try:
-            mech_res = self.mech_model.solve_strain(sol, params)
+            # Extract C-rate for mechanical scaling
+            current = np.abs(np.mean(sol["Current [A]"].data))
+            cap = float(params["Nominal cell capacity [A.h]"])
+            c_rate = current / cap if cap > 0 else 1.0
+
+            mech_res = self.mech_model.solve_strain(sol, params, c_rate=c_rate)
             max_strain = mech_res["max_strain"]
 
             # Extract E_eff for stress estimation proxy

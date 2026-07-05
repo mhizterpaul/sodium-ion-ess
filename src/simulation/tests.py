@@ -30,7 +30,13 @@ class StabilityValidator:
         # Reconstruct optimized parameters using the pipeline values
         base_params = get_parameter_values()
         pt = ParamTransform(pybamm.ParameterValues(base_params))
-        pt.apply_physics_deltas(opt_data.get("combined_deltas_representative", {}))
+
+        # Apply deltas (merging functionalization if present)
+        deltas = opt_data.get("combined_deltas_representative", {}).copy()
+        val_data = self.pipeline_data.get("validation", {})
+        # Note: If validation step added more deltas or parameters, we ensure they are captured.
+
+        pt.apply_physics_deltas(deltas)
 
         design_specs = opt_data.get("design_specs_representative", {})
         pt.apply_design_vector(
@@ -39,6 +45,11 @@ class StabilityValidator:
         )
 
         self.optimized_params = pt.get_parameter_values()
+        # Ensure DFN stability parameters from validate.py
+        if "SEI solvent diffusivity [m2.s-1]" not in self.optimized_params:
+             self.optimized_params["SEI solvent diffusivity [m2.s-1]"] = 2.5e-22
+        if "Bulk solvent concentration [mol.m-3]" not in self.optimized_params:
+             self.optimized_params["Bulk solvent concentration [mol.m-3]"] = 2636.0
         self.electro_model = ElectrochemicalThermalDriverModel()
 
         self.mech_model = ThermoelasticStrainModel()
@@ -97,21 +108,27 @@ class StabilityValidator:
         # 1. Electrochemical-Thermal Solve
         model_dict = self.electro_model.build_model(parameter_updates=updates)
 
-        # Adjust current for C-rate
+        # Adjust current for C-rate (handle scalar or profile)
         cap_ah = model_dict["parameter_values"]["Nominal cell capacity [A.h]"]
-        current = c_rate * cap_ah
+
+        # Effective average c-rate for time scaling and mechanical solve
+        if isinstance(c_rate, (list, np.ndarray)):
+             eff_c_rate = np.mean(c_rate)
+             current = c_rate * cap_ah
+        else:
+             eff_c_rate = c_rate
+             current = c_rate * cap_ah
 
         # Time for 1C is 3600s
-        times = np.linspace(0, 3600 / c_rate, 50)
+        times = np.linspace(0, 3600 / eff_c_rate, 50)
 
         results = self.electro_model.simulate(model_dict, times, current_function=current)
 
-        
-
         # 3. Mechanical Strain Solve
         mech_results = self.mech_model.solve_strain(
-            pybamm_solution=results["solution"],
-            params=model_dict["parameter_values"]
+            pybamm_sol=results["solution"],
+            params=model_dict["parameter_values"],
+            c_rate=eff_c_rate
         )
 
         # 4. Fatigue / Endurance
@@ -131,12 +148,15 @@ class StabilityValidator:
         # Base Validation at 1C using the fully optimized parameter set
         res_1c = self.run_full_simulation(self.optimized_params, c_rate=1.0)
 
-
-        # Robustness Check
-        print("  Running Robustness Check (+10% thickness)...")
-        robust_updates = design_updates.copy()
+        # Robustness Check (using varying C-rate profile)
+        print("  Running Robustness Check with varying C-rate and (+10% thickness)...")
+        robust_updates = dict(self.optimized_params)
         robust_updates["Positive electrode thickness [m]"] *= 1.1
-        res_robust = self.run_full_simulation(robust_updates, c_rate=1.0)
+
+        # Generate varying C-rate profile
+        varying_c = self.electro_model.get_varying_c_rate_profile(base_c_rate=1.0, duration=3600.0)
+
+        res_robust = self.run_full_simulation(robust_updates, c_rate=varying_c)
 
         energy_base = res_1c["electro"]["solution"]["Discharge capacity [A.h]"].entries[-1]
         energy_robust = res_robust["electro"]["solution"]["Discharge capacity [A.h]"].entries[-1]

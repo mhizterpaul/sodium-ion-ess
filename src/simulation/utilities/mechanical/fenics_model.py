@@ -29,13 +29,17 @@ class ThermoelasticStrainModel:
         if self.critical_thresholds is None:
             self.critical_thresholds = {"NFPP": 2e-3, "hard_carbon": 1e-3, "SEI": 5e-4}
 
-    def solve_strain(self, pybamm_sol: Any, params: Any) -> Dict[str, Any]:
+    def solve_strain(self, pybamm_sol: Any, params: Any, c_rate: float = 1.0) -> Dict[str, Any]:
         """Solves for the displacement and strain field."""
+        # Rate-dependent scaling for strain (Power-law scaling reflecting internal concentration gradients)
+        rate_scaling = (max(c_rate, 1e-3) / 1.0) ** 0.25
+
         if dolfinx is None:
             # Physics-based proxy for fallback (linear expansion)
             T = np.max(pybamm_sol["Cell temperature [K]"].data)
             soc = 1.0 - (pybamm_sol["Discharge capacity [A.h]"].data[-1] / params["Nominal cell capacity [A.h]"])
-            strain = 1e-5 * (T - 298.15) + 0.02 * soc
+            # Incorporate rate scaling into proxy
+            strain = (1e-5 * (T - 298.15) + 0.02 * soc) * rate_scaling
             return {"max_strain": float(strain)}
 
         # Electrode dimensions (Pouch section) from paper.md and cell_alpha.py
@@ -64,8 +68,9 @@ class ThermoelasticStrainModel:
         # Material parameters
         E = fem.Constant(domain, default_scalar_type(params.get("Negative electrode Young's modulus [Pa]", 10e9)))
         nu = fem.Constant(domain, default_scalar_type(0.3))
-        alpha = fem.Constant(domain, default_scalar_type(1e-5)) # Thermal expansion
-        beta = fem.Constant(domain, default_scalar_type(0.02)) # SOC expansion
+        # Rate-dependent expansion coefficients
+        alpha = fem.Constant(domain, default_scalar_type(1e-5 * rate_scaling)) # Thermal expansion
+        beta = fem.Constant(domain, default_scalar_type(0.02 * rate_scaling)) # SOC expansion
         T_ref = fem.Constant(domain, default_scalar_type(298.15))
 
         mu = E / (2 * (1 + nu))
