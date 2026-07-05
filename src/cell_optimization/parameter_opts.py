@@ -377,10 +377,10 @@ class HierarchicalOptimizer:
             sol = res["sol"]
             v, curr, t = sol["Terminal voltage [V]"].data, sol["Current [A]"].data, sol["Time [s]"].data
 
-            # Energy calculation (Issue 5.1) - Discharge E is always positive
-            power_vals = np.abs(v * curr)
+            # Energy calculation (Issue 4) - Integration of V*I
             trapz_func = getattr(np, "trapezoid", getattr(np, "trapz", None))
-            energy_wh = trapz_func(power_vals, t) / 3600
+            energy_wh = abs(trapz_func(v * curr, t)) / 3600
+            power_vals = np.abs(v * curr)
 
             energy = float(energy_wh)
             power = np.max(power_vals)

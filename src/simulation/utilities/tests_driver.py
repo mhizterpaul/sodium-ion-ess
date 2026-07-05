@@ -44,31 +44,36 @@ class ElectrochemicalThermalDriverModel:
         profile = base_c_rate * (1.0 + 0.5 * np.sin(2 * np.pi * t / (duration / 2)))
         return profile
 
-    def simulate(self, model_dict: Dict[str, Any], times: list, current_function=None) -> Dict[str, Any]:
+    def simulate(self, model_dict: Dict[str, Any], times: Optional[list] = None, current_function=None, experiment: Optional[Any] = None) -> Dict[str, Any]:
         if pybamm is None:
             raise ImportError("pybamm is required for simulation")
 
         model = model_dict["model"]
-        param = model_dict["parameter_values"]
-
-        if current_function is not None:
-            if isinstance(current_function, (list, np.ndarray)):
-                # Use interpolation for varying current profile
-                # Ensure times and current_function have the same length
-                t_eval = np.array(times)
-                if len(current_function) != len(t_eval):
-                     # If length mismatch, assume current_function is a schedule and interpolate
-                     current_profile = np.interp(t_eval, np.linspace(t_eval[0], t_eval[-1], len(current_function)), current_function)
-                else:
-                     current_profile = current_function
-
-                param["Current function [A]"] = pybamm.Interpolant(t_eval, current_profile, pybamm.t)
-            else:
-                param["Current function [A]"] = current_function
+        # Use copy to avoid mutation (Issue 15)
+        param = model_dict["parameter_values"].copy()
 
         solver = pybamm.CasadiSolver(mode="safe")
-        sim = pybamm.Simulation(model, parameter_values=param, solver=solver)
-        solution = sim.solve(times)
+
+        if experiment is not None:
+            # Use Experiment API for better event handling and realism (Issue 3)
+            sim = pybamm.Simulation(model, parameter_values=param, experiment=experiment, solver=solver)
+            solution = sim.solve()
+        else:
+            if current_function is not None:
+                if isinstance(current_function, (list, np.ndarray)):
+                    # Use interpolation for varying current profile
+                    t_eval = np.array(times)
+                    if len(current_function) != len(t_eval):
+                         current_profile = np.interp(t_eval, np.linspace(t_eval[0], t_eval[-1], len(current_function)), current_function)
+                    else:
+                         current_profile = current_function
+
+                    param["Current function [A]"] = pybamm.Interpolant(t_eval, current_profile, pybamm.t)
+                else:
+                    param["Current function [A]"] = current_function
+
+            sim = pybamm.Simulation(model, parameter_values=param, solver=solver)
+            solution = sim.solve(times)
 
         cap_ah = solution["Discharge capacity [A.h]"].entries
         nom_cap = param["Nominal cell capacity [A.h]"]

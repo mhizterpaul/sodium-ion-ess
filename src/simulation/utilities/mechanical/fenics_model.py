@@ -35,11 +35,24 @@ class ThermoelasticStrainModel:
         rate_scaling = (max(c_rate, 1e-3) / 1.0) ** 0.25
 
         if dolfinx is None:
-            # Physics-based proxy for fallback (linear expansion)
-            T = np.max(pybamm_sol["Cell temperature [K]"].data)
-            soc = 1.0 - (pybamm_sol["Discharge capacity [A.h]"].data[-1] / params["Nominal cell capacity [A.h]"])
-            # Incorporate rate scaling into proxy
-            strain = (1e-5 * (T - 298.15) + 0.02 * soc) * rate_scaling
+            # Physics-based proxy for fallback (intercalation strain)
+            # Use Volume-averaged values if available for better field representation (Issue 6, 8)
+            try:
+                T_all = pybamm_sol["Volume-averaged cell temperature [K]"].entries
+            except:
+                T_all = pybamm_sol["Cell temperature [K]"].entries
+
+            T_max = np.max(T_all)
+
+            # Intercalation strain depends on local concentration, here proxied by SOC (Issue 7)
+            # We use max SOC change to proxy max local strain gradients
+            cap_ah = pybamm_sol["Discharge capacity [A.h]"].entries
+            nom_cap = params["Nominal cell capacity [A.h]"]
+            soc_all = 1.0 - (cap_ah / nom_cap)
+            soc_max_change = np.max(soc_all) - np.min(soc_all)
+
+            # Incorporate rate scaling into proxy to account for internal gradients (Issue 2)
+            strain = (1e-5 * (T_max - 298.15) + 0.02 * soc_max_change) * rate_scaling
             return {"max_strain": float(strain)}
 
         # Electrode dimensions (Pouch section) from paper.md and cell_alpha.py
