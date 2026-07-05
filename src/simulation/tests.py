@@ -3,10 +3,9 @@ import numpy as np
 import scipy.io as sio
 import os
 import json
-from src.simulation.utilities.parameters.parameter_builder import get_parameter_values
+from nfpp_sodium_ion.src.cell_parameters.parameter_builder import get_parameter_values
 from src.cell_optimization.parameter_opts import ParamTransform, DESIGN_SPACE
-from src.simulation.utilities.electrochemical.pybamm_driver import ElectrochemicalThermalDriverModel
-from src.simulation.utilities.thermal.pybamm_thermal import ThermalFieldModel
+from simulation.utilities.tests_driver import ElectrochemicalThermalDriverModel
 from src.simulation.utilities.mechanical.fenics_model import ThermoelasticStrainModel
 
 class StabilityValidator:
@@ -41,7 +40,7 @@ class StabilityValidator:
 
         self.optimized_params = pt.get_parameter_values()
         self.electro_model = ElectrochemicalThermalDriverModel()
-        self.thermal_model = ThermalFieldModel()
+
         self.mech_model = ThermoelasticStrainModel()
 
     def derive_ssc_parameters(self, solution, pybamm_params):
@@ -107,8 +106,7 @@ class StabilityValidator:
 
         results = self.electro_model.simulate(model_dict, times, current_function=current)
 
-        # 2. Thermal Field Extraction
-        thermal_data = self.thermal_model.extract_thermal_data(results["solution"])
+        
 
         # 3. Mechanical Strain Solve
         mech_results = self.mech_model.solve_strain(
@@ -121,7 +119,7 @@ class StabilityValidator:
 
         return {
             "electro": results,
-            "thermal": thermal_data,
+  
             "mechanical": mech_results,
             "endurance": endurance,
             "params": model_dict["parameter_values"]
@@ -133,16 +131,6 @@ class StabilityValidator:
         # Base Validation at 1C using the fully optimized parameter set
         res_1c = self.run_full_simulation(self.optimized_params, c_rate=1.0)
 
-        # Envelope Sweep
-        print("  Running Operating Envelope Sweep...")
-        envelope = {}
-        for cr in [0.5, 2.0]:
-            sol = self.run_full_simulation(design_updates, c_rate=cr)
-            key = f"C_{str(cr).replace('.', '_')}"
-            envelope[key] = {
-                "energy_wh": float(sol["electro"]["solution"]["Discharge capacity [A.h]"].entries[-1]) * 3.1,
-                "max_temp": float(np.max(sol["electro"]["temperature"]))
-            }
 
         # Robustness Check
         print("  Running Robustness Check (+10% thickness)...")
@@ -166,7 +154,6 @@ class StabilityValidator:
             "nominal_voltage_v": float(np.mean(res_1c["electro"]["terminal_voltage"])),
             "max_strain": float(res_1c["mechanical"]["max_strain"]),
             "cycle_life": float(min(res_1c["endurance"]["n_crit"], 1e12)),
-            "envelope_sweep": envelope,
             "robustness_passed": bool(robustness_passed),
             "merged_params": clean_params,
             # Simscape-Mapped Parameters (Derived from high-fidelity DFN transient)

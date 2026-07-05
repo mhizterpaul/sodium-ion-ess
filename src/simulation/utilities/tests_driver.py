@@ -1,4 +1,4 @@
-"""Electrochemical-Thermal Driver Model."""
+"""Electrochemical-Thermal Driver"""
 
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
@@ -9,7 +9,7 @@ try:
 except ImportError:  # pragma: no cover
     pybamm = None
 
-from src.simulation.utilities.parameters.parameter_builder import get_parameter_values
+from nfpp_sodium_ion.src.cell_parameters.parameter_builder import get_parameter_values
 
 @dataclass
 class ElectrochemicalThermalDriverModel:
