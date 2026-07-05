@@ -19,9 +19,19 @@ class ElectrochemicalThermalDriverModel:
         self.model_type = "DFN"
         self._cache = {}
 
-    def _get_model(self):
-        if "model" in self._cache:
-            return self._cache["model"]
+    def _get_processed_components(self, param: pybamm.ParameterValues):
+        # Cache key based on geometry-affecting parameters and options (Issue 1, 14)
+        geometry_keys = [
+            "Positive electrode thickness [m]",
+            "Negative electrode thickness [m]",
+            "Separator thickness [m]",
+            "Positive particle radius [m]",
+            "Negative particle radius [m]"
+        ]
+        key = tuple(float(param.get(k, 0)) for k in geometry_keys)
+
+        if key in self._cache:
+            return self._cache[key]
 
         options = {
             "thermal": "x-full",
@@ -34,24 +44,21 @@ class ElectrochemicalThermalDriverModel:
         except AttributeError:
             model = pybamm.lithium_ion.DFN(options=options)
 
-        self._cache["model"] = model
-        return model
+        geometry = model.default_geometry
+        param.process_geometry(geometry)
+        mesh = pybamm.Mesh(geometry, model.default_submesh_types, model.default_var_pts)
+        disc = pybamm.Discretisation(mesh, model.default_spatial_methods)
+
+        self._cache[key] = {"model": model, "geometry": geometry, "mesh": mesh, "disc": disc}
+        return self._cache[key]
 
     def build_model(self, parameter_updates: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         if pybamm is None:
             raise ImportError("pybamm is required for the electrochemical-thermal driver model")
 
-        model = self._get_model()
         param = get_parameter_values(updates=parameter_updates)
-
-        # Inject essential topology parameters for Experiment/Event handling if missing
-        param.update({
-            "Number of cells connected in series to make a battery": 1,
-            "Number of strings connected in parallel to make a battery": 1,
-            "Number of electrodes connected in parallel to make a cell": 1,
-        }, check_already_exists=False)
-
-        return {"model": model, "parameter_values": param}
+        components = self._get_processed_components(param)
+        return {"model": components["model"], "parameter_values": param, "components": components}
 
     def get_varying_c_rate_profile(self, base_c_rate: float, duration: float, n_points: int = 100) -> np.ndarray:
         """Generates a varying C-rate profile (sine-wave oscillation around base)."""
@@ -67,12 +74,19 @@ class ElectrochemicalThermalDriverModel:
         model = model_dict["model"]
         # Use copy to avoid mutation (Issue 15)
         param = model_dict["parameter_values"].copy()
+        components = model_dict.get("components")
 
         solver = pybamm.CasadiSolver(mode="safe")
 
         if experiment is not None:
-            # Use Experiment API for better event handling and realism (Issue 3)
-            sim = pybamm.Simulation(model, parameter_values=param, experiment=experiment, solver=solver)
+            # Reusing pre-processed components if available (Issue 2)
+            if components:
+                sim = pybamm.Simulation(
+                    model, parameter_values=param, experiment=experiment, solver=solver,
+                    mesh=components["mesh"], discretisation=components["disc"]
+                )
+            else:
+                sim = pybamm.Simulation(model, parameter_values=param, experiment=experiment, solver=solver)
             solution = sim.solve()
         else:
             if current_function is not None:
@@ -88,7 +102,13 @@ class ElectrochemicalThermalDriverModel:
                 else:
                     param["Current function [A]"] = current_function
 
-            sim = pybamm.Simulation(model, parameter_values=param, solver=solver)
+            if components:
+                 sim = pybamm.Simulation(
+                      model, parameter_values=param, solver=solver,
+                      mesh=components["mesh"], discretisation=components["disc"]
+                 )
+            else:
+                 sim = pybamm.Simulation(model, parameter_values=param, solver=solver)
             solution = sim.solve(times)
 
         cap_ah = solution["Discharge capacity [A.h]"].entries

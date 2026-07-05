@@ -73,15 +73,26 @@ class ThermoelasticStrainModel:
         u = ufl.TrialFunction(V)
         v = ufl.TestFunction(V)
 
-        # Map DFN outputs to FEniCS
+        # Map DFN fields (c_s, T) to FEniCS mesh (Issue 5, 7, 8)
         Q = fem.functionspace(domain, ("CG", 1))
-        T_max = np.max(pybamm_sol["Cell temperature [K]"].data)
-        soc_val = 1.0 - (pybamm_sol["Discharge capacity [A.h]"].data[-1] / params["Nominal cell capacity [A.h]"])
+
+        # Extract full field data from DFN solution (Issue 5, 8)
+        try:
+             T_data = pybamm_sol["Volume-averaged cell temperature [K]"].entries
+             # Proxying 1D X-field to 3D mesh (Issue 7)
+             T_max = np.max(T_data)
+
+             sto_p = pybamm_sol["X-averaged positive electrode surface stoichiometry"].entries
+             sto_n = pybamm_sol["X-averaged negative electrode surface stoichiometry"].entries
+             delta_sto = max(np.max(sto_p), np.max(sto_n))
+        except (KeyError, pybamm.ModelError, AttributeError):
+             T_max = np.max(pybamm_sol["Cell temperature [K]"].entries)
+             delta_sto = 1.0 - (pybamm_sol["Discharge capacity [A.h]"].entries[-1] / params["Nominal cell capacity [A.h]"])
 
         T_field = fem.Function(Q)
         T_field.interpolate(lambda x: np.full(x.shape[1], T_max))
         s_field = fem.Function(Q)
-        s_field.interpolate(lambda x: np.full(x.shape[1], soc_val))
+        s_field.interpolate(lambda x: np.full(x.shape[1], delta_sto))
 
         # Material parameters
         E = fem.Constant(domain, default_scalar_type(params.get("Negative electrode Young's modulus [Pa]", 10e9)))

@@ -56,6 +56,8 @@ def get_parameter_values():
         "Electrode height [m]": 0.130,
         "Electrode width [m]": 0.070,
         "Number of electrodes connected in parallel to make a cell": float(derived["n_layers_10ah"]),
+        "Number of cells connected in series to make a battery": 1,
+        "Number of strings connected in parallel to make a battery": 1,
         "Nominal cell capacity [A.h]": cell.capacity_ah,
         "Current function [A]": current_function,
         "Contact resistance [Ohm]": 0,

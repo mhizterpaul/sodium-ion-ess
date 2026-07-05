@@ -3,10 +3,53 @@ import numpy as np
 import scipy.io as sio
 import os
 import json
+import copy
 from nfpp_sodium_ion.src.cell_parameters.parameter_builder import get_parameter_values
 from src.cell_optimization.parameter_opts import ParamTransform, DESIGN_SPACE
 from simulation.utilities.tests_driver import ElectrochemicalThermalDriverModel
 from src.simulation.utilities.mechanical.fenics_model import ThermoelasticStrainModel
+
+class BESSScenarioGenerator:
+    """Generates realistic BESS Experiments (Issue 3, 11, 13)."""
+
+    @staticmethod
+    def charge_step(rate, limit=None):
+        return f"Charge at {rate} until {limit}V" if limit else f"Charge at {rate}"
+
+    @staticmethod
+    def discharge_step(rate, limit=None):
+        return f"Discharge at {rate} until {limit}V" if limit else f"Discharge at {rate}"
+
+    @staticmethod
+    def get_blackout_scenario(v_max):
+        # Issue 13: Realistic grid loss during charging
+        return pybamm.Experiment([
+            BESSScenarioGenerator.charge_step("1C", limit=v_max),
+            "Rest for 60 minutes"
+        ])
+
+    @staticmethod
+    def get_dispatch_scenario(v_min, v_max):
+        # Issue 3, 10: Multi-stage realistic BESS dispatch
+        return pybamm.Experiment([
+            BESSScenarioGenerator.discharge_step("0.5C", limit=v_min),
+            "Rest for 20 minutes",
+            BESSScenarioGenerator.charge_step("0.5C", limit=v_max),
+            "Rest for 20 minutes",
+            "Discharge at 10W for 10 minutes", # Peak shaving proxy
+            "Rest for 30 minutes"
+        ])
+
+    @staticmethod
+    def get_pv_firming_scenario(v_max):
+        # Issue 10: PV fluctuations
+        return pybamm.Experiment([
+            "Charge at 0.2C for 10 minutes",
+            "Rest for 5 minutes",
+            "Charge at 0.8C for 10 minutes",
+            "Rest for 5 minutes",
+            BESSScenarioGenerator.charge_step("0.5C", limit=v_max)
+        ])
 
 class StabilityValidator:
     """
@@ -32,7 +75,6 @@ class StabilityValidator:
         pt = ParamTransform(pybamm.ParameterValues(base_params))
 
         # Apply deltas (merging functionalization if present)
-        import copy
         deltas = copy.deepcopy(opt_data.get("combined_deltas_representative", {}))
         # Note: If validation step added more deltas or parameters, we ensure they are captured.
 
@@ -149,22 +191,13 @@ class StabilityValidator:
         }
 
     def validate_optimized_design(self):
-        print("Validating optimized twin with full physics (using BESS dispatch trace)...")
+        print("Validating optimized twin with full physics (using BESS scenarios)...")
 
-        # Extract dynamic voltage limits for physically consistent Experiment definition (Issue 1)
         v_min = self.optimized_params["Lower voltage cut-off [V]"]
         v_max = self.optimized_params["Upper voltage cut-off [V]"]
 
-        # 1. Base Validation using Realistic BESS Dispatch Experiment
-        # (Issue 1, 3, 9, 10, 11)
-        dispatch_experiment = pybamm.Experiment([
-            "Discharge at 0.5C for 30 minutes",
-            "Rest for 10 minutes",
-            f"Discharge at 1.5C until {v_min}V",
-            "Rest for 30 minutes",
-            f"Charge at 0.5C until {v_max}V"
-        ])
-
+        # 1. Base Validation: BESS Dispatch (Issue 3, 11)
+        dispatch_experiment = BESSScenarioGenerator.get_dispatch_scenario(v_min, v_max)
         res_dispatch = self.run_full_simulation(self.optimized_params, experiment=dispatch_experiment)
 
         # 2. Robustness Check: Grid Outage during Charge (Issue 11, 13)
@@ -172,47 +205,55 @@ class StabilityValidator:
         robust_updates = self.optimized_params.copy()
         robust_updates["Positive electrode thickness [m]"] *= 1.1
 
-        blackout_experiment = pybamm.Experiment([
-            "Charge at 1C for 20 minutes",
-            "Rest for 60 minutes" # Abrupt grid loss / relaxation
-        ])
-
+        blackout_experiment = BESSScenarioGenerator.get_blackout_scenario(v_max)
         res_robust = self.run_full_simulation(robust_updates, experiment=blackout_experiment)
 
-        # 3. Correct Energy and Efficiency metrics (Issue 4, 12, 17)
-        def compute_energy_io_wh(sol):
+        # 3. Physically Meaningful Efficiency Metrics (Issue 5, 12)
+        def compute_efficiency_metrics(sol):
              v = sol["Terminal voltage [V]"].entries
              i = sol["Current [A]"].entries
              t = sol["Time [s]"].entries
              p = v * i
              trapz_func = getattr(np, "trapezoid", getattr(np, "trapz", None))
 
-             # Separate Charge (in) and Discharge (out) - Issue 12
+             # Separation based on net energy flow (Issue 4, 12)
+             # PyBaMM standard: positive current is discharge (out)
              e_out = trapz_func(np.maximum(p, 0), t) / 3600.0
              e_in = abs(trapz_func(np.minimum(p, 0), t)) / 3600.0
-             return e_in, e_out
 
-        e_in, e_out = compute_energy_io_wh(res_dispatch["electro"]["solution"])
-        efficiency = e_out / e_in if e_in > 0 else 0.0
+             # Coulombic efficiency integration (Issue 5)
+             q_out = trapz_func(np.maximum(i, 0), t) / 3600.0
+             q_in = abs(trapz_func(np.minimum(i, 0), t)) / 3600.0
 
-        # 4. Weighted Robustness Index (Issue 14)
-        def compute_robustness_index(res):
-             # R = w1*T + w2*strain + w3*SOH
-             w = [0.3, 0.5, 0.2]
+             eta_e = e_out / e_in if e_in > 0 else 0.0
+             eta_c = q_out / q_in if q_in > 0 else 0.0
+             eta_v = eta_e / eta_c if eta_c > 0 else 0.0
+
+             return {"e_in": e_in, "e_out": e_out, "eta_energy": eta_e, "eta_coulombic": eta_c, "eta_voltage": eta_v}
+
+        metrics = compute_efficiency_metrics(res_dispatch["electro"]["solution"])
+
+        # 4. Constraint-Based Robustness Scoring (Issue 6, 14)
+        def evaluate_robustness(res):
              T_max = np.max(res["electro"]["temperature"])
              strain_max = res["mechanical"]["max_strain"]
              soh_final = res["electro"]["soh_trajectory"][-1] / 100.0
+             v_min_actual = np.min(res["electro"]["terminal_voltage"])
+             v_max_actual = np.max(res["electro"]["terminal_voltage"])
 
-             # Normalized components
-             c1 = min(1.0, (T_max - 298.15) / 50.0)
-             c2 = min(1.0, strain_max / self.mech_model.critical_thresholds["NFPP"])
-             c3 = 1.0 - soh_final
+             # Hard constraints
+             constraints = [
+                  T_max < 333.15, # 60C limit
+                  strain_max < self.mech_model.critical_thresholds["NFPP"],
+                  soh_final > 0.99, # Negligible degradation for short trace
+                  v_min_actual > 0.95 * v_min,
+                  v_max_actual < 1.05 * v_max
+             ]
 
-             score = 1.0 - (w[0]*c1 + w[1]*c2 + w[2]*c3)
-             return max(0.0, score)
+             score = sum(constraints) / len(constraints)
+             return score, all(constraints)
 
-        robustness_score = compute_robustness_index(res_robust)
-        robustness_passed = robustness_score > 0.7
+        robustness_score, robustness_passed = evaluate_robustness(res_robust)
 
         # Compile final report
         clean_params = {}
@@ -222,9 +263,11 @@ class StabilityValidator:
                 clean_params[clean_k] = v
 
         results = {
-            "energy_discharge_kwh": float(e_out / 1000.0),
-            "energy_charge_kwh": float(e_in / 1000.0),
-            "round_trip_efficiency": float(efficiency),
+            "energy_discharge_kwh": float(metrics["e_out"] / 1000.0),
+            "energy_charge_kwh": float(metrics["e_in"] / 1000.0),
+            "eta_energy": float(metrics["eta_energy"]),
+            "eta_coulombic": float(metrics["eta_coulombic"]),
+            "eta_voltage": float(metrics["eta_voltage"]),
             "nominal_voltage_v": float(np.mean(res_dispatch["electro"]["terminal_voltage"])),
             "max_strain": float(res_dispatch["mechanical"]["max_strain"]),
             "cycle_life": float(min(res_dispatch["endurance"]["n_crit"], 1e12)),
