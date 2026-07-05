@@ -9,6 +9,7 @@ Solves the thermo-chemo-mechanical PDE:
 """
 
 import numpy as np
+import pybamm
 from typing import Any, Dict, Optional
 from dataclasses import dataclass
 

@@ -210,7 +210,8 @@ class SingleObjectiveProblem(Problem):
     def __init__(self, optimizer, x_full, active_indices, deltas, mode, ref_scale=1.0):
         xl = DESIGN_BOUNDS[active_indices, 0]
         xu = DESIGN_BOUNDS[active_indices, 1]
-        super().__init__(n_var=len(active_indices), n_obj=1, n_constr=1, xl=xl, xu=xu)
+        # Constraints: 1. tp <= tn, 2. T <= 333.15K, 3. Physics validity (Issue 6)
+        super().__init__(n_var=len(active_indices), n_obj=1, n_constr=3, xl=xl, xu=xu)
         self.optimizer = optimizer
         self.x_full = x_full
         self.active_indices = active_indices
@@ -223,34 +224,33 @@ class SingleObjectiveProblem(Problem):
         from src.cell_optimization.chem_regularization import mechanical_stability_metric
         for xi in x:
             x_eval = self.x_full.copy(); x_eval[self.active_indices] = xi
-            # Issue 14: t_p <= t_n. Normalized constraint (Issue 4.2).
-            g = (x_eval[0] - x_eval[1]) / max(DESIGN_BOUNDS[0][1], DESIGN_BOUNDS[1][1])
+
+            # Constraint 1: t_p <= t_n (Normalized)
+            g1 = (x_eval[0] - x_eval[1]) / max(DESIGN_BOUNDS[0][1], DESIGN_BOUNDS[1][1])
 
             pt = ParamTransform(self.optimizer.base_params)
             pt.apply_physics_deltas(self.deltas); pt.apply_design_vector(x_eval, DESIGN_SPACE)
             pv = pt.get_parameter_values()
 
-            f_val = 1e9
+            f_val = 1.0 # Default un-optimized state
+            g2 = 1.0    # Default thermal violation
+            g3 = 1.0    # Default physics violation
+
             if validate_params(pv):
+                g3 = -1.0 # Physics OK
                 res = self.optimizer.simulate(pv)
                 if res["success"]:
-                    # Stage 1: Fast thermal check
-                    if res["T_max"] > 333.15: # 60 degC limit
-                        f_val = 1e9
-                    else:
-                        if self.mode == "energy": f_val = -res["energy"]
-                        elif self.mode == "power": f_val = -res["power"]
-                        elif self.mode == "stability":
-                            # Stage 1 Stability proxy
-                            f_val = -mechanical_stability_metric(stresses=res["stresses"])
+                    # Constraint 2: T_max <= 333.15K (Normalized)
+                    g2 = (res["T_max"] - 333.15) / 333.15
+
+                    if self.mode == "energy": f_val = -res["energy"]
+                    elif self.mode == "power": f_val = -res["power"]
+                    elif self.mode == "stability":
+                        f_val = -mechanical_stability_metric(stresses=res["stresses"])
 
             # Objective scaling using constant reference (Major Nitpick Fix)
-            f_val /= self.ref_scale
-
-            # Penalty shaping (Issue 4.2)
-            penalty = 100 * np.square(max(g, 0))
-            F.append(f_val + penalty)
-            G_all.append([g])
+            F.append(f_val / self.ref_scale)
+            G_all.append([g1, g2, g3])
 
         out["F"] = np.array(F); out["G"] = np.array(G_all)
 
@@ -408,7 +408,7 @@ class HierarchicalOptimizer:
             return {"success": False, "reason": f"Post-simulation processing failed: {e}"}
 
     def evaluate_stability_pde(self, params: pybamm.ParameterValues, mode: str, c_rate: float = 1.0) -> Tuple[bool, float]:
-        """Stage 2: Expensive FEM thermo-mechanical solve."""
+        """Stage 2: Expensive FEM thermo-mechanical solve (Constraint-based)."""
         res = self.simulate(params, c_rate=c_rate, return_sol=True)
         if not res["success"]: return False, -1e9
 
@@ -419,12 +419,9 @@ class HierarchicalOptimizer:
             critical_strain = self.mech_model.critical_thresholds.get("NFPP", 2e-3)
             eta = max_strain / critical_strain
 
-            stability = -eta
-            # If failed (eta > 1), large penalty
-            if eta > 1.0:
-                stability -= 10.0 * (eta - 1.0)**2
-
-            return True, float(stability)
+            # Use raw -eta as stability objective (Issue 6 refinement)
+            # Quadratic penalties removed to allow exploration near the limit eta=1
+            return True, -float(eta)
         except Exception as e:
             print(f"ERROR: FEM solve failed: {e}\n{traceback.format_exc()}")
             return False, -1e9
