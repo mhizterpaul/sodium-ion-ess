@@ -1,0 +1,91 @@
+{
+  "materials": {
+    "cathode": {
+      "name": "Mn-doped-x0.05",
+      "formula": "Fe"
+    },
+    "electrolyte": {
+      "salt": "NaTCP"
+    }
+  },
+  "design_specs_representative": {
+    "Positive electrode thickness [m]": 8.999999999999999e-05,
+    "Negative electrode thickness [m]": 8.999999999999999e-05,
+    "Positive electrode porosity": 0.35,
+    "Negative electrode porosity": 0.35,
+    "Positive particle radius [m]": 5.050000000000002e-06,
+    "Negative particle radius [m]": 5.050000000000002e-06,
+    "Separator porosity": 0.5,
+    "carbon_fraction": 0.08499999999999999
+  },
+  "combined_deltas_representative": {
+    "thermodynamic": {
+      "voltage_boost": -0.0,
+      "stability_shift": 0.0
+    },
+    "kinetic": {
+      "exchange_current_log_delta": 0.0
+    },
+    "transport": {
+      "diffusivity_log_delta": 0.0,
+      "conductivity_log_delta": 0.0,
+      "electrolyte_conductivity_log_delta": -0.2816163295699822,
+      "electrolyte_diffusivity_log_delta": 0.000892474790494762
+    },
+    "structural": {
+      "strain": 0.0
+    }
+  },
+  "sensitivity_matrix": [
+    [
+      0.060009438146712155,
+      0.10914378422183238,
+      4.909432953399129,
+      4.562403875675303,
+      -1.3019431924873872,
+      -1.0986092846526634,
+      4.806982374702118,
+      0.02320994547028166
+    ],
+    [
+      2.624567294308802e-09,
+      2.6245670924654125e-09,
+      0.9383166840759567,
+      0.939547445559796,
+      -0.037118656242007886,
+      -0.036092535413700555,
+      1.3484334093982755,
+      0.011523742333707796
+    ],
+    [
+      -0.07331264214371923,
+      0.31099255391353603,
+      -0.6745880382652562,
+      -0.3736600778836422,
+      1.892391773523627,
+      -0.10611450829145463,
+      -0.3589491964106628,
+      0.004678594187623733
+    ]
+  ],
+  "parameter_grouping": {
+    "Energy": [
+      "Positive electrode porosity",
+      "Negative electrode porosity",
+      "Separator porosity"
+    ],
+    "Power": [
+      "Positive electrode porosity",
+      "Negative electrode porosity",
+      "Separator porosity"
+    ],
+    "Stability": [
+      "Positive particle radius [m]"
+    ],
+    "Coupled": [
+      "Positive electrode porosity",
+      "Negative electrode porosity",
+      "Separator porosity"
+    ]
+  }
+}
