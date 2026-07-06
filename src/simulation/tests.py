@@ -156,47 +156,47 @@ class StabilityValidator:
         model_dict = self.electro_model.build_model(parameter_updates=updates)
 
         try:
-             if experiment:
-                  results = self.electro_model.simulate(model_dict, experiment=experiment)
-                  # Extract effective C-rate for mechanical scaling (Issue 2)
-                  avg_current = np.mean(np.abs(results["solution"]["Current [A]"].entries))
-                  cap_ah = model_dict["parameter_values"]["Nominal cell capacity [A.h]"]
-                  eff_c_rate = avg_current / cap_ah if cap_ah > 0 else 1.0
-             else:
-                  # Adjust current for C-rate (handle scalar or profile)
-                  cap_ah = model_dict["parameter_values"]["Nominal cell capacity [A.h]"]
+            if experiment:
+                results = self.electro_model.simulate(model_dict, experiment=experiment)
+                # Extract effective C-rate for mechanical scaling (Issue 2)
+                avg_current = np.mean(np.abs(results["solution"]["Current [A]"].entries))
+                cap_ah = model_dict["parameter_values"]["Nominal cell capacity [A.h]"]
+                eff_c_rate = avg_current / cap_ah if cap_ah > 0 else 1.0
+            else:
+                # Adjust current for C-rate (handle scalar or profile)
+                cap_ah = model_dict["parameter_values"]["Nominal cell capacity [A.h]"]
 
-                  # Effective average c-rate for time scaling and mechanical solve
-                  if isinstance(c_rate, (list, np.ndarray)):
-                       eff_c_rate = np.mean(c_rate)
-                       current = c_rate * cap_ah
-                  else:
-                       eff_c_rate = c_rate
-                       current = c_rate * cap_ah
+                # Effective average c-rate for time scaling and mechanical solve
+                if isinstance(c_rate, (list, np.ndarray)):
+                    eff_c_rate = np.mean(c_rate)
+                    current = c_rate * cap_ah
+                else:
+                    eff_c_rate = c_rate
+                    current = c_rate * cap_ah
 
-                  # Time for 1C is 3600s
-                  times = np.linspace(0, 3600 / eff_c_rate, 50)
-                  results = self.electro_model.simulate(model_dict, times, current_function=current)
+                # Time for 1C is 3600s
+                times = np.linspace(0, 3600 / eff_c_rate, 50)
+                results = self.electro_model.simulate(model_dict, times, current_function=current)
 
-             # 3. Mechanical Strain Solve
-             mech_results = self.mech_model.solve_strain(
-                 pybamm_sol=results["solution"],
-                 params=model_dict["parameter_values"],
-                 c_rate=eff_c_rate
-             )
+            # 3. Mechanical Strain Solve
+            mech_results = self.mech_model.solve_strain(
+                pybamm_sol=results["solution"],
+                params=model_dict["parameter_values"],
+                c_rate=eff_c_rate
+            )
 
-             # 4. Fatigue / Endurance
-             endurance = self.mech_model.compute_endurance_metric(mech_results["max_strain"])
+            # 4. Fatigue / Endurance
+            endurance = self.mech_model.compute_endurance_metric(mech_results["max_strain"])
 
-             return {
-                 "electro": results,
-                 "mechanical": mech_results,
-                 "endurance": endurance,
-                 "params": model_dict["parameter_values"]
-             }
+            return {
+                "electro": results,
+                "mechanical": mech_results,
+                "endurance": endurance,
+                "params": model_dict["parameter_values"]
+            }
         except Exception as e:
-             print(f"ERROR: run_full_simulation failed: {e}\n{traceback.format_exc()}")
-             raise
+            print(f"ERROR: run_full_simulation failed: {e}\n{traceback.format_exc()}")
+            raise
 
     def validate_optimized_design(self):
         print("Validating optimized twin with full physics (using BESS scenarios)...")
