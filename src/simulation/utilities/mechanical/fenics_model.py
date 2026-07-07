@@ -78,20 +78,23 @@ class ThermoelasticStrainModel:
         z_coords = np.linspace(0, H, 10) # 10 nodes for interpolation
 
         try:
-             # Extract T(x) and c_s(x) distributions
-             T_x = pybamm_sol["X-averaged cell temperature [K]"].entries
-             # Since it's X-averaged, we fallback to distributing it over the stack
-             T_interp = lambda x: np.interp(x[2], [0, H], [np.min(T_x), np.max(T_x)])
+             # Extract spatial distribution at final time step (Issue 7, 8)
+             # Use variables that provide spatial resolution across the stack
+             T_spatial = pybamm_sol["Cell temperature [K]"].entries[:, -1]
+             T_interp = lambda x: np.interp(x[2], np.linspace(0, H, len(T_spatial)), T_spatial)
 
-             sto_p = pybamm_sol["X-averaged positive electrode surface stoichiometry"].entries
-             sto_n = pybamm_sol["X-averaged negative electrode surface stoichiometry"].entries
-             # Map intercalation strain potential across the stack
+             sto_p_spatial = pybamm_sol["Positive electrode surface stoichiometry"].entries[:, -1]
+             sto_n_spatial = pybamm_sol["Negative electrode surface stoichiometry"].entries[:, -1]
+
              def stoichiometry_mapping(x):
-                  # x[2] is stack thickness (Z)
-                  # 0 to H_n is Anode, H_n to H_n+H_s is Separator, H_n+H_s to H is Cathode
+                  # Map 1D electrode stoichiometric fields to 3D mesh zones (Issue 8)
                   val = np.zeros(x.shape[1])
-                  val[x[2] < H_n] = np.max(sto_n)
-                  val[x[2] > (H_n + H_s)] = np.max(sto_p)
+                  # Anode zone (0 to H_n)
+                  mask_n = x[2] <= H_n
+                  val[mask_n] = np.interp(x[2, mask_n], np.linspace(0, H_n, len(sto_n_spatial)), sto_n_spatial)
+                  # Cathode zone (H_n + H_s to H)
+                  mask_p = x[2] >= (H_n + H_s)
+                  val[mask_p] = np.interp(x[2, mask_p], np.linspace(H_n + H_s, H, len(sto_p_spatial)), sto_p_spatial)
                   return val
 
         except (KeyError, pybamm.ModelError, AttributeError):

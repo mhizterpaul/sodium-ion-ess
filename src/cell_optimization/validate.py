@@ -90,6 +90,11 @@ class OptimizationValidator:
 
         try:
             sol = sim.solve([0, 3600], inputs={"Current [A]": params["Nominal cell capacity [A.h]"]})
+        except Exception as e:
+            print(f"ERROR: Optimization validation simulation failed: {e}\n{traceback.format_exc()}")
+            return None
+
+        try:
             v = sol["Terminal voltage [V]"].entries
             cap = sol["Discharge capacity [A.h]"].entries[-1]
 

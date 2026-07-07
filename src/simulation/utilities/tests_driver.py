@@ -78,14 +78,8 @@ class ElectrochemicalThermalDriverModel:
         components = model_dict.get("components")
 
         if experiment is not None:
-            # Reusing pre-processed components if available (Issue 2)
-            if components:
-                sim = pybamm.Simulation(
-                    model, parameter_values=param, experiment=experiment, solver=self.solver,
-                    mesh=components["mesh"], discretisation=components["disc"]
-                )
-            else:
-                sim = pybamm.Simulation(model, parameter_values=param, experiment=experiment, solver=self.solver)
+            # Standard API usage (Issue 2)
+            sim = pybamm.Simulation(model, parameter_values=param, experiment=experiment, solver=self.solver)
             solution = sim.solve()
         else:
             if current_function is not None:
@@ -101,13 +95,7 @@ class ElectrochemicalThermalDriverModel:
                 else:
                     param["Current function [A]"] = current_function
 
-            if components:
-                 sim = pybamm.Simulation(
-                      model, parameter_values=param, solver=self.solver,
-                      mesh=components["mesh"], discretisation=components["disc"]
-                 )
-            else:
-                 sim = pybamm.Simulation(model, parameter_values=param, solver=self.solver)
+            sim = pybamm.Simulation(model, parameter_values=param, solver=self.solver)
             solution = sim.solve(times)
 
         cap_ah = solution["Discharge capacity [A.h]"].entries

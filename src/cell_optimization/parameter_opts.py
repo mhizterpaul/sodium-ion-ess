@@ -87,7 +87,8 @@ def validate_params(pv: Dict[str, Any]):
 
     D_p = pv["Positive particle diffusivity [m2.s-1]"]
     D_val = D_p(0.5, 298.15) if callable(D_p) else D_p
-    if D_val > 1e-10: return False
+    # Relaxed limit to avoid over-rejection (Issue 1)
+    if D_val > 1e-8: return False
     return True
 
 class ParamTransform:
@@ -238,7 +239,7 @@ class SingleObjectiveProblem(Problem):
             g3 = 1.0    # Default physics violation
 
             if validate_params(pv):
-                g3 = 0.0 # Physics OK (Issue 1)
+                g3 = -1e-6 # Physics OK (Issue 1)
                 res = self.optimizer.simulate(pv)
                 if res["success"]:
                     # Constraint 2: T_max <= 333.15K (Physical margin) - Issue 2
@@ -356,7 +357,8 @@ class SimulationRunner:
             sol = solver.solve(processed_model, [0, 3600 / c_rate], inputs={"Current [A]": c_rate * float(params["Nominal cell capacity [A.h]"])})
             return {"success": True, "sol": sol}
         except Exception as e:
-            return {"success": False, "reason": f"{e}"}
+            err_msg = f"ERROR: DFN Simulation failed: {e}\n{traceback.format_exc()}"
+            return {"success": False, "reason": err_msg}
 
 class HierarchicalOptimizer:
     def __init__(self, engine: Optional[Any] = None, base_params: Optional[pybamm.ParameterValues] = None):
@@ -374,6 +376,7 @@ class HierarchicalOptimizer:
     def simulate(self, params: pybamm.ParameterValues, c_rate: float = 1.0, return_sol: bool = False) -> Dict[str, Any]:
         res = self.runner.run_simulation(params, c_rate)
         if not res["success"]:
+            print(res["reason"])
             return res
 
         try:
@@ -511,8 +514,21 @@ def run_workflow(engine: Optional[Any] = None):
             d = regularize_salt_props(bases["salt"]["formula"], salt.composition, bases["salt"]["properties"], salt.properties)
             for k, v in d.items(): deltas.setdefault(k, {}).update(v)
         x_base = np.array([np.mean(b) for b in DESIGN_BOUNDS])
+
+        # Candidate Identification Logging
+        cand_name = f"{cat.name if cat else 'None'} + {salt.name if salt else 'None'}"
+        print(f"INFO: Evaluating candidate: {cand_name}")
+
+        pt_test = ParamTransform(optimizer.base_params)
+        pt_test.apply_physics_deltas(deltas); pt_test.apply_design_vector(x_base, DESIGN_SPACE)
+        if not validate_params(pt_test.get_parameter_values()):
+             print(f"WARNING: Candidate {cand_name} failed parameter validation. Skipping.")
+             continue
+
         G = optimizer.compute_jacobian(x_base, deltas)
-        if G is None: continue
+        if G is None:
+             print(f"WARNING: Jacobian computation failed for {cand_name}. Skipping.")
+             continue
 
         opt_designs = []
         # Calculate baseline metrics for objective scaling
@@ -552,7 +568,9 @@ def run_workflow(engine: Optional[Any] = None):
             if ok:
                 valid_candidates.append(x); stability_scores.append(score)
 
-        if not valid_candidates: continue
+        if not valid_candidates:
+             print(f"WARNING: No valid designs found for {cand_name} after Stage 2 stability filtering.")
+             continue
 
         # Issue 7 Step 4: Selection and interpolation
         x_star = valid_candidates[np.argmax(stability_scores)]
