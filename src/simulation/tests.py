@@ -7,7 +7,7 @@ import copy
 import traceback
 from nfpp_sodium_ion.src.cell_parameters.parameter_builder import get_parameter_values
 from src.cell_optimization.parameter_opts import ParamTransform, DESIGN_SPACE
-from simulation.utilities.tests_driver import ElectrochemicalThermalDriverModel
+from src.simulation.utilities.tests_driver import ElectrochemicalThermalDriverModel
 from src.simulation.utilities.mechanical.fenics_model import ThermoelasticStrainModel
 
 class BESSScenarioGenerator:
@@ -216,7 +216,12 @@ class StabilityValidator:
         blackout_experiment = BESSScenarioGenerator.get_blackout_scenario(v_max)
         res_robust = self.run_full_simulation(robust_updates, experiment=blackout_experiment)
 
-        # 3. Physically Meaningful Efficiency Metrics (Issue 4, 5, 12)
+        # 3. Varying C-rate Stress Test (Requested by user)
+        print("  Running Varying C-rate Stress Test (Oscillating profile)...")
+        profile = self.electro_model.get_varying_c_rate_profile(base_c_rate=1.0, duration=1800, n_points=50)
+        res_varying = self.run_full_simulation(self.optimized_params, c_rate=profile)
+
+        # 4. Physically Meaningful Efficiency Metrics (Issue 4, 5, 12)
         def compute_efficiency_metrics(sol):
              v = sol["Terminal voltage [V]"].entries
              i = sol["Current [A]"].entries
@@ -268,6 +273,10 @@ class StabilityValidator:
 
         robustness_score, robustness_passed = evaluate_robustness(res_robust)
 
+        # Also check varying c-rate robustness
+        var_score, var_passed = evaluate_robustness(res_varying)
+        combined_robustness_score = (robustness_score + var_score) / 2.0
+
         # Compile final report
         clean_params = {}
         for k, v in res_dispatch["params"].items():
@@ -284,8 +293,8 @@ class StabilityValidator:
             "nominal_voltage_v": float(np.mean(res_dispatch["electro"]["terminal_voltage"])),
             "max_strain": float(res_dispatch["mechanical"]["max_strain"]),
             "cycle_life": float(min(res_dispatch["endurance"]["n_crit"], 1e12)),
-            "robustness_score": float(robustness_score),
-            "robustness_passed": bool(robustness_passed),
+            "robustness_score": float(combined_robustness_score),
+            "robustness_passed": bool(robustness_passed and var_passed),
             "merged_params": clean_params,
             # Simscape-Mapped Parameters (Derived from high-fidelity DFN transient)
             "ssc_params": self.derive_ssc_parameters(res_dispatch["electro"]["solution"], res_dispatch["params"])

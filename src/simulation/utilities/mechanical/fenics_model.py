@@ -30,7 +30,7 @@ class ThermoelasticStrainModel:
         if self.critical_thresholds is None:
             self.critical_thresholds = {"NFPP": 2e-3, "hard_carbon": 1e-3, "SEI": 5e-4}
 
-    def solve_strain(self, pybamm_sol: Any, params: Any) -> Dict[str, Any]:
+    def solve_strain(self, pybamm_sol: Any, params: Any, **kwargs) -> Dict[str, Any]:
         """Solves for the displacement and strain field with 1D-3D field mapping (Issue 7, 8)."""
         # Note: Rate-dependent scaling removed (Issue 9) as DFN concentration fields
         # already account for rate-induced internal gradients.

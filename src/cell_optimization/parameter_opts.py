@@ -446,7 +446,15 @@ def run_workflow(engine: Optional[Any] = None):
         pt.apply_physics_deltas(deltas); pt.apply_design_vector(final_x, DESIGN_SPACE)
         final_metrics = optimizer.simulate(pt.get_parameter_values())
         if final_metrics["success"]:
-            material_results.append({"cat": cat, "salt": salt, "x": final_x, "metrics": final_metrics, "deltas": deltas, "jacobian": G})
+            material_results.append({
+                "cat": cat,
+                "salt": salt,
+                "x": final_x,
+                "metrics": final_metrics,
+                "deltas": deltas,
+                "jacobian": G,
+                "opt_designs": opt_designs
+            })
     print("="*80)
     print(f"Candidates processed: {len(db[MaterialCategory.CATHODE_DOPANT]) * len(db[MaterialCategory.SALT])}")
     print(f"Successful candidates: {len(material_results)}")
@@ -464,8 +472,16 @@ def run_workflow(engine: Optional[Any] = None):
             if S[i, j] > 0.5: groups[obj].append(name); member_of.append(obj)
         if len(member_of) > 1: groups["Coupled"].append(name)
     output = {
-        "materials": {"cathode": {"name": best["cat"].name, "formula": best["cat"].composition}, "electrolyte": {"salt": best["salt"].name}},
+        "materials": {
+            "cathode": {"name": best["cat"].name, "formula": best["cat"].composition, "properties": best["cat"].properties},
+            "electrolyte": {"salt": best["salt"].name, "properties": best["salt"].properties}
+        },
+        "bases": bases,
         "design_specs_representative": dict(zip(DESIGN_SPACE, best["x"].tolist())),
+        "opt_designs_per_objective": {
+            mode: dict(zip(DESIGN_SPACE, design.tolist()))
+            for mode, design in zip(["energy", "power", "stability"], best["opt_designs"])
+        },
         "combined_deltas_representative": best["deltas"],
         "sensitivity_matrix": best["jacobian"].tolist(),
         "parameter_grouping": groups
