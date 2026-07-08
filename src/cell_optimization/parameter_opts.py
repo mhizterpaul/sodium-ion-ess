@@ -389,6 +389,7 @@ def run_workflow(engine: Optional[Any] = None):
         raise RuntimeError("Base material resolution failed.")
     optimizer = HierarchicalOptimizer(engine=engine)
     print("Executing Sensitivity-Driven DFN Hierarchical Optimization (Layer 3)...")
+
     material_results = []
     for cat, salt in [(c, s) for c in db[MaterialCategory.CATHODE_DOPANT] for s in db[MaterialCategory.SALT]]:
         deltas = {}
@@ -444,9 +445,27 @@ def run_workflow(engine: Optional[Any] = None):
         final_x = 0.8 * x_star + 0.2 * np.mean(valid_candidates, axis=0)
         pt = ParamTransform(optimizer.base_params)
         pt.apply_physics_deltas(deltas); pt.apply_design_vector(final_x, DESIGN_SPACE)
-        final_metrics = optimizer.simulate(pt.get_parameter_values())
+        final_pv = pt.get_parameter_values()
+        final_metrics = optimizer.simulate(final_pv, return_sol=True)
         if final_metrics["success"]:
-            material_results.append({"cat": cat, "salt": salt, "x": final_x, "metrics": final_metrics, "deltas": deltas, "jacobian": G})
+            from src.cell_optimization.chem_regularization import mechanical_stability_metric
+            mech_opt = optimizer.mech_model.solve_strain(final_metrics["sol"], final_pv)
+            final_metrics.update({
+                "stability_metric": mechanical_stability_metric(stresses=final_metrics["stresses"]),
+                "max_strain": mech_opt["max_strain"]
+            })
+            # Remove sol to keep result.json small
+            final_metrics.pop("sol", None)
+
+            material_results.append({
+                "cat": cat,
+                "salt": salt,
+                "x": final_x,
+                "metrics": final_metrics,
+                "deltas": deltas,
+                "jacobian": G,
+                "opt_designs": opt_designs
+            })
     print("="*80)
     print(f"Candidates processed: {len(db[MaterialCategory.CATHODE_DOPANT]) * len(db[MaterialCategory.SALT])}")
     print(f"Successful candidates: {len(material_results)}")
@@ -464,8 +483,16 @@ def run_workflow(engine: Optional[Any] = None):
             if S[i, j] > 0.5: groups[obj].append(name); member_of.append(obj)
         if len(member_of) > 1: groups["Coupled"].append(name)
     output = {
-        "materials": {"cathode": {"name": best["cat"].name, "formula": best["cat"].composition}, "electrolyte": {"salt": best["salt"].name}},
+        "materials": {
+            "cathode": {"name": best["cat"].name, "formula": best["cat"].composition, "properties": best["cat"].properties},
+            "electrolyte": {"salt": best["salt"].name, "properties": best["salt"].properties}
+        },
+        "bases": bases,
         "design_specs_representative": dict(zip(DESIGN_SPACE, best["x"].tolist())),
+        "opt_designs_per_objective": {
+            mode: dict(zip(DESIGN_SPACE, design.tolist()))
+            for mode, design in zip(["energy", "power", "stability"], best["opt_designs"])
+        },
         "combined_deltas_representative": best["deltas"],
         "sensitivity_matrix": best["jacobian"].tolist(),
         "parameter_grouping": groups
