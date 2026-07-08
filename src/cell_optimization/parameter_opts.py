@@ -389,6 +389,7 @@ def run_workflow(engine: Optional[Any] = None):
         raise RuntimeError("Base material resolution failed.")
     optimizer = HierarchicalOptimizer(engine=engine)
     print("Executing Sensitivity-Driven DFN Hierarchical Optimization (Layer 3)...")
+
     material_results = []
     for cat, salt in [(c, s) for c in db[MaterialCategory.CATHODE_DOPANT] for s in db[MaterialCategory.SALT]]:
         deltas = {}
@@ -444,8 +445,18 @@ def run_workflow(engine: Optional[Any] = None):
         final_x = 0.8 * x_star + 0.2 * np.mean(valid_candidates, axis=0)
         pt = ParamTransform(optimizer.base_params)
         pt.apply_physics_deltas(deltas); pt.apply_design_vector(final_x, DESIGN_SPACE)
-        final_metrics = optimizer.simulate(pt.get_parameter_values())
+        final_pv = pt.get_parameter_values()
+        final_metrics = optimizer.simulate(final_pv, return_sol=True)
         if final_metrics["success"]:
+            from src.cell_optimization.chem_regularization import mechanical_stability_metric
+            mech_opt = optimizer.mech_model.solve_strain(final_metrics["sol"], final_pv)
+            final_metrics.update({
+                "stability_metric": mechanical_stability_metric(stresses=final_metrics["stresses"]),
+                "max_strain": mech_opt["max_strain"]
+            })
+            # Remove sol to keep result.json small
+            final_metrics.pop("sol", None)
+
             material_results.append({
                 "cat": cat,
                 "salt": salt,
