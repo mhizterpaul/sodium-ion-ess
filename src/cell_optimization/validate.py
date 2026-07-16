@@ -6,6 +6,7 @@ import json
 import traceback
 from typing import Dict, Any, List, Tuple, Optional
 from nfpp_sodium_ion.src.cell_parameters.cell_alpha import get_parameter_values
+from nfpp_sodium_ion.src.calibration.derivation import get_derived_parameters
 from src.cell_optimization.material_opt import MaterialMappingEngine, MaterialCategory, MaterialCandidate
 from src.cell_optimization.chem_regularization import derive_coupled_deltas, regularize_salt_props, regularize_functionalization
 from src.cell_optimization.parameter_opts import ParamTransform, HierarchicalOptimizer, DESIGN_SPACE

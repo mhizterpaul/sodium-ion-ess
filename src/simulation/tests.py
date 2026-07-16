@@ -77,7 +77,6 @@ class StabilityValidator:
 
         # Apply deltas (merging functionalization if present)
         deltas = copy.deepcopy(opt_data.get("combined_deltas_representative", {}))
-        # Note: If validation step added more deltas or parameters, we ensure they are captured.
 
         pt.apply_physics_deltas(deltas)
 
@@ -96,60 +95,6 @@ class StabilityValidator:
         self.electro_model = ElectrochemicalThermalDriverModel()
 
         self.mech_model = ThermoelasticStrainModel()
-
-    def derive_ssc_parameters(self, solution, pybamm_params):
-        """
-        Derives Simscape ECM parameters using DFN overpotential fields (Issue 15).
-        """
-        v = solution["Terminal voltage [V]"].entries
-        i = solution["Current [A]"].entries
-        t = solution["Time [s]"].entries
-
-        try:
-             # Use OCV field for accurate overpotential extraction
-             v_oc = solution["Measured open-circuit voltage [V]"].entries
-        except (KeyError, pybamm.ModelError, AttributeError):
-             v_oc = np.full_like(v, v[0])
-
-        # 1. R0 (Ohmic): Based on first step
-        dv = abs(v[0] - v[1])
-        di = abs(i[1])
-        R0 = dv / (di + 1e-6)
-
-        # 2. RC Branches (Heuristic extraction from overpotential curve)
-        eta_total = np.abs(v_oc - v - i*R0)
-        eta_final = eta_total[-1]
-
-        # Split into fast (R1, C1) and slow (R2, C2)
-        # R1 ~ 40% of diffusion/activation overpotential
-        R1 = 0.4 * eta_final / (di + 1e-6)
-        C1 = 2000.0 # Time constant ~ 10s
-
-        R2 = 0.6 * eta_final / (di + 1e-6)
-        C2 = 5000.0 # Time constant ~ 30s
-
-        # 3. Thermal capacitance (C_th)
-        # Sum of (Volume * Density * Cp) for all components
-        L_p = pybamm_params["Positive electrode thickness [m]"]
-        L_n = pybamm_params["Negative electrode thickness [m]"]
-        L_s = pybamm_params["Separator thickness [m]"]
-        A = pybamm_params["Electrode width [m]"] * pybamm_params["Electrode height [m]"]
-
-        rho_p = pybamm_params["Positive electrode density [kg.m-3]"]
-        rho_n = pybamm_params["Negative electrode density [kg.m-3]"]
-        cp_p = pybamm_params["Positive electrode specific heat capacity [J.kg-1.K-1]"]
-        cp_n = pybamm_params["Negative electrode specific heat capacity [J.kg-1.K-1]"]
-
-        Cth = (L_p * A * rho_p * cp_p) + (L_n * A * rho_n * cp_n)
-
-        return {
-            "R_0": float(R0),
-            "R1": float(R1), "C1": float(C1),
-            "R2": float(R2), "C2": float(C2),
-            "C_th_core": float(Cth),
-            "V_nom": float(np.mean(v)),
-            "Q_nom": float(solution["Discharge capacity [A.h]"].entries[-1])
-        }
 
     def run_full_simulation(self, updates, c_rate=1.0, experiment=None):
         # 1. Electrochemical-Thermal Solve
@@ -295,9 +240,7 @@ class StabilityValidator:
             "cycle_life": float(min(res_dispatch["endurance"]["n_crit"], 1e12)),
             "robustness_score": float(combined_robustness_score),
             "robustness_passed": bool(robustness_passed and var_passed),
-            "merged_params": clean_params,
-            # Simscape-Mapped Parameters (Derived from high-fidelity DFN transient)
-            "ssc_params": self.derive_ssc_parameters(res_dispatch["electro"]["solution"], res_dispatch["params"])
+            "merged_params": clean_params
         }
 
         return results
