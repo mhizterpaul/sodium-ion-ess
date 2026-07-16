@@ -199,13 +199,6 @@ No BESS benchmarking or BESS-specific multi-physics digital twins are modeled wi
 
 ✓ Load model categories
 
-Examples include
-
-* Residential
-* Commercial
-* Industrial
-* Mixed-use
-
 ---
 
 ## Unknown
@@ -243,25 +236,6 @@ It provides
 * Load switching
 * Protection device modelling
 * Python integration for automated simulation studies
-
----
-
-## Limitation of OpenDSS
-
-OpenDSS is fundamentally a quasi-static simulator.
-
-It does not accurately model
-
-* Electromagnetic transients
-* Sub-cycle switching phenomena
-* Travelling waves
-* Transformer inrush currents
-* Electromagnetic motor starting transients
-* High-frequency switching harmonics
-
-These dynamic phenomena are important for extracting transient spectral features, phase-angle signatures, and dynamic coherency metrics that may improve hidden network realization.
-
-Accordingly, OpenDSS provides the steady-state operating point for each simulated scenario, while a transient simulation package (ATP) is coupled to reproduce waveform-level responses following switching events or disturbances.
 
 ---
 
