@@ -7,9 +7,7 @@ import inspect
 import copy
 from collections import OrderedDict
 from typing import Dict, Any, List, Tuple, Optional
-from pymoo.core.problem import Problem
-from pymoo.algorithms.soo.nonconvex.ga import GA
-from pymoo.optimize import minimize as pymoo_minimize
+from src.cell_optimization.cem_optimizer import CrossEntropyOptimizer
 from nfpp_sodium_ion.src.cell_parameters.cell_alpha import get_parameter_values
 from nfpp_sodium_ion.src.calibration.derivation import get_derived_parameters
 from src.simulation.utilities.mechanical.fenics_model import ThermoelasticStrainModel
@@ -210,11 +208,8 @@ class ParamTransform:
 
         return pybamm.ParameterValues(self.values_dict)
 
-class SingleObjectiveProblem(Problem):
+class SingleObjectiveProblem:
     def __init__(self, optimizer, x_full, active_indices, deltas, mode, ref_scale=1.0):
-        xl = DESIGN_BOUNDS[active_indices, 0]
-        xu = DESIGN_BOUNDS[active_indices, 1]
-        super().__init__(n_var=len(active_indices), n_obj=1, n_constr=3, xl=xl, xu=xu)
         self.optimizer = optimizer
         self.x_full = x_full
         self.active_indices = active_indices
@@ -222,31 +217,40 @@ class SingleObjectiveProblem(Problem):
         self.mode = mode
         self.ref_scale = max(abs(ref_scale), 1e-9)
 
-    def _evaluate(self, x, out, *args, **kwargs):
-        F, G_all = [], []
+    def evaluate_single(self, x_full):
         from src.cell_optimization.chem_regularization import mechanical_stability_metric
-        for xi in x:
-            x_eval = self.x_full.copy(); x_eval[self.active_indices] = xi
-            g1 = (x_eval[0] - x_eval[1]) / max(DESIGN_BOUNDS[0][1], DESIGN_BOUNDS[1][1])
-            pt = ParamTransform(self.optimizer.base_params)
-            pt.apply_physics_deltas(self.deltas); pt.apply_design_vector(x_eval, DESIGN_SPACE)
-            pv = pt.get_parameter_values()
-            f_val = 1000.0
-            g2 = 1.0
-            g3 = 1.0
-            if validate_params(pv):
-                g3 = -1e-6
-                res = self.optimizer.simulate(pv)
-                if res["success"]:
-                    g2 = res["T_max"] - 333.15
-                    if self.mode == "energy": f_val = -res["energy"]
-                    elif self.mode == "power": f_val = -res["power"]
-                    elif self.mode == "stability":
-                        f_val = -mechanical_stability_metric(stresses=res["stresses"])
-            sc = max(abs(self.ref_scale), 0.1)
-            F.append(f_val / sc)
-            G_all.append([g1, g2, g3])
-        out["F"] = np.array(F); out["G"] = np.array(G_all)
+        g1 = (x_full[0] - x_full[1]) / max(DESIGN_BOUNDS[0][1], DESIGN_BOUNDS[1][1])
+        if g1 > 0:
+            return 1e12, False
+
+        pt = ParamTransform(self.optimizer.base_params)
+        pt.apply_physics_deltas(self.deltas)
+        pt.apply_design_vector(x_full, DESIGN_SPACE)
+        pv = pt.get_parameter_values()
+
+        if not validate_params(pv):
+            return 1e12, False
+
+        res = self.optimizer.simulate(pv)
+        if not res["success"]:
+            return 1e12, False
+
+        g2 = res["T_max"] - 333.15
+        if g2 > 0:
+            return 1e12, False
+
+        if self.mode == "energy":
+            f_val = -res["energy"]
+        elif self.mode == "power":
+            f_val = -res["power"]
+        elif self.mode == "stability":
+            f_val = -mechanical_stability_metric(stresses=res["stresses"])
+        else:
+            f_val = 1e12
+
+        sc = max(abs(self.ref_scale), 0.1)
+        score = f_val / sc
+        return score, True
 
 class GeometryCache:
     def __init__(self, max_size: int = 32):
@@ -446,7 +450,10 @@ def run_workflow(engine: Optional[Any] = None):
     print("Executing Sensitivity-Driven DFN Hierarchical Optimization (Layer 3)...")
 
     material_results = []
-    for cat, salt in [(c, s) for c in db[MaterialCategory.CATHODE_DOPANT] for s in db[MaterialCategory.SALT]]:
+    pairs = [(c, s) for c in db[MaterialCategory.CATHODE_DOPANT] for s in db[MaterialCategory.SALT]]
+    if os.environ.get("CEM_FAST_RUN") == "True":
+        pairs = pairs[:1]
+    for cat, salt in pairs:
         deltas = {}
         if cat and cat.deltas:
             for g_name, props in cat.deltas.items():
@@ -482,9 +489,12 @@ def run_workflow(engine: Optional[Any] = None):
                     from src.cell_optimization.chem_regularization import mechanical_stability_metric
                     ref_val = mechanical_stability_metric(stresses=base_metrics["stresses"])
             problem = SingleObjectiveProblem(optimizer, x_base, active_indices, deltas, mode, ref_scale=ref_val)
-            res_opt = pymoo_minimize(problem, GA(pop_size=20), ('n_gen', 30), verbose=False)
+            pop_size = int(os.environ.get("CEM_POP_SIZE", 8))
+            iters = int(os.environ.get("CEM_ITERATIONS", 3))
+            cem = CrossEntropyOptimizer(population_size=pop_size, iterations=iters)
+            best_active = cem.optimize(problem.evaluate_single, x_base, DESIGN_BOUNDS, active_indices, G[i, :], verbose=False)
             x_opt = x_base.copy()
-            if res_opt.X is not None: x_opt[active_indices] = np.atleast_2d(res_opt.X)[0]
+            x_opt[active_indices] = best_active
             opt_designs.append(x_opt)
         valid_candidates, stability_scores = [], []
         for x, mode in zip(opt_designs, ["energy", "power", "stability"]):
