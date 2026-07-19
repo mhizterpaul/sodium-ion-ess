@@ -8,7 +8,7 @@ This repository implements a high-fidelity digital twin and optimization framewo
 ### 1. DFN-Based NFPP Cell Optimization
 A hierarchical multi-stage framework for cell design enhancement:
 *   **Layered Material Mapping**: Decoupled architecture for eco-friendly salts (NaTCP, NaBOB), cathode dopants (Cr, Mn, Ni), and MTMS functionalization.
-*   **Parameter Optimization**: Hierarchical search for structural ($\theta_s$) and material ($\theta_m$) parameters using sensitivity-based Jacobian screening and Genetic Algorithms.
+*   **Parameter Optimization**: Hierarchical search for structural ($\theta_s$) and material ($\theta_m$) parameters using sensitivity-based Jacobian screening and a Sensitivity-Guided Cross-Entropy Method (SG-CEM).
 
 ### 2. Multi-feeder solar–BESS network state realization and anomaly detection using phase dynamics (Core Contribution)
 The primary research focus is the realization of network states and anomaly detection in a multi-feeder microgrid coupled by shared solar and BESS sources.
