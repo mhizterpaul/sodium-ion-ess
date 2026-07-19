@@ -4,7 +4,7 @@
 
 ## Research Summary & Scope
 
-DFN-Based NFPP Cell Optimization
+### 1. DFN-Based NFPP Cell Optimization
 A hierarchical multi-stage framework for cell design enhancement:
 *   **Layered Material Mapping**: Decoupled architecture for eco-friendly salts (NaTCP, NaBOB), cathode dopants (Cr, Mn, Ni), and MTMS functionalization.
 *   **Parameter Optimization**: Hierarchical search for structural ($\theta_s$) and material ($\theta_m$) parameters using sensitivity-based Jacobian screening and a Sensitivity-Guided Cross-Entropy Method (SG-CEM).
