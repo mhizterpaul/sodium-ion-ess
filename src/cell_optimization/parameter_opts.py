@@ -219,25 +219,24 @@ class SingleObjectiveProblem:
 
     def evaluate_single(self, x_full):
         from src.cell_optimization.chem_regularization import mechanical_stability_metric
+        # g1: thickness constraint (tp <= tn)
         g1 = (x_full[0] - x_full[1]) / max(DESIGN_BOUNDS[0][1], DESIGN_BOUNDS[1][1])
-        if g1 > 0:
-            return 1e12, False
 
         pt = ParamTransform(self.optimizer.base_params)
         pt.apply_physics_deltas(self.deltas)
         pt.apply_design_vector(x_full, DESIGN_SPACE)
         pv = pt.get_parameter_values()
 
+        # g3: parameter validation and physics check
         if not validate_params(pv):
-            return 1e12, False
+            return 1000.0, [max(0.0, g1), 0.0, 1.0], False
 
         res = self.optimizer.simulate(pv)
         if not res["success"]:
-            return 1e12, False
+            return 1000.0, [max(0.0, g1), 0.0, 1.0], False
 
+        # g2: thermal limit (T <= 333.15K)
         g2 = res["T_max"] - 333.15
-        if g2 > 0:
-            return 1e12, False
 
         if self.mode == "energy":
             f_val = -res["energy"]
@@ -246,11 +245,15 @@ class SingleObjectiveProblem:
         elif self.mode == "stability":
             f_val = -mechanical_stability_metric(stresses=res["stresses"])
         else:
-            f_val = 1e12
+            f_val = 1000.0
 
         sc = max(abs(self.ref_scale), 0.1)
-        score = f_val / sc
-        return score, True
+        score_unpenalized = f_val / sc
+
+        # All constraints must be <= 0.0 for feasibility
+        g_list = [g1, g2, 0.0]
+        feasible = (g1 <= 0.0) and (g2 <= 0.0)
+        return score_unpenalized, g_list, feasible
 
 class GeometryCache:
     def __init__(self, max_size: int = 32):
