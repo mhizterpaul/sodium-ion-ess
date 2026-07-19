@@ -8,7 +8,8 @@
 A hierarchical multi-stage framework for cell design enhancement:
 *   **Layered Material Mapping**: Decoupled architecture for eco-friendly salts (NaTCP, NaBOB), cathode dopants (Cr, Mn, Ni), and MTMS functionalization.
 *   **Parameter Optimization**: Hierarchical search for structural ($\theta_s$) and material ($\theta_m$) parameters using sensitivity-based Jacobian screening and a Sensitivity-Guided Cross-Entropy Method (SG-CEM).
-This repository implements an integrated plant–network digital twin framework for high-fidelity performance benchmarking of Sodium Iron Pyrophosphate (NFPP) battery energy storage systems (BESS). 
+
+This repository implements an  plant condition–integrated, high-fidelity performance benchmarking of Sodium Iron Pyrophosphate (NFPP) battery energy storage systems (BESS). 
 
 ### 2. Latent Distribution Network State Estimation & Feature Extraction (Core Contribution)
 The primary research focus is the realization of latent network states in a multi-feeder distribution network using boundary measurements and sub-cycle transient realization signatures:
