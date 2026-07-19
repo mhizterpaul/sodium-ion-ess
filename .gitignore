@@ -3,3 +3,8 @@
 .vscode/
 __pycache__/
 *.pyc
+
+# Run and build artifacts
+result.json
+material_cache.json
+*.egg-info/
