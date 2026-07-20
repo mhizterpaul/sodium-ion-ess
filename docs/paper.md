@@ -47,7 +47,25 @@ Layer stack:
 	External casing: poly-based moisture barrier (no aluminum laminate)
 	Inner sealant: polypropylene-based sealing layer 
 
-Base Model Validation and BESS Robustness Evaluation Framework
+#### **Design Space:**
+   
+*   **Structural Parameters ($\theta_s$):** Electrode thickness ($L_c, L_a$), porosity ($\epsilon_c, \epsilon_a, \epsilon_{sep}$), tortuosity ($\tau$), active material loading and particle size ($r_p$).
+*   **Material Parameters ($\theta_m$):** NFPP fraction, conductive carbon fraction, and electrolyte composition (concentration/salts)
+
+#### **Layered Material Mapping**
+
+This phase resolves performance properties for chemistry modifications using a decoupled architecture: a **Material Mapping Engine** for data resolution and a **Physics Layer** for property-to-parameter transformation.
+
+*   **Decoupled Mapping Engine:** The framework implements a prioritized resolution flow (OQMD Exact $\rightarrow$ MP Exact $\rightarrow$ Class Baselines) for a fixed candidate space (Mn/Cr/Ni dopants, NaBOB/NaTCP salts, MTMS functionalization). Strict stability-sorting ensures ground-state accuracy.
+*   **Physics Channel Models:** Performance deltas are derived through channel-specific physics models: Nernstian proxies for voltage shifts ($ΔV \propto -ΔE_f$), exponential thermal activation mapping for conductivity ($\sigma \propto \exp(-E_g/2kT)$), and interphase kinetic models for SEI growth, all scaled by a bounded stability realization factor.
+*   **Electrolyte & Fluorine Reduction:** Selection of non-fluorinated salts to reduce environmental burden and cost. Primary candidates include **NaBOB** (Sodium bis(oxalato)borate) for stability and **NaTCP** (Sodium tricyanomethanide) for high performance.
+*   **Electrode Doping:** Fe-site doping for cathodes using **Cr** (Cr³⁺ stabilizer), **Mn** (voltage booster), and **Ni** is evaluated via sensitivity-based optimization.
+*   **Alkyl Silane Functionalization:** Implementation of hard carbon electrode functionalization using **methyltrimethoxysilane (MTMS)**. This process replaces surface –OH groups with –Si–O–R groups on the hard carbon electrode, increasing hydrophobicity and promoting a more uniform SEI layer. The model accounts for reduced SEI kinetics (slower growth and lower irreversible capacity fade), slower interfacial resistance growth over cycles, and optimized exchange current density resulting from improved surface wetting and local ion accessibility.
+*   Sensitivity-Driven Cell Parameter Optimization 
+The projected design space ($\theta = [\theta_s, \theta_m]$) is explored with a hierarchical workflow that combines sensitivity screening, objective-specific SG-CEM refinement, and expensive stability filtering. In the implementation, the design vector is first perturbed around a nominal point to estimate the Jacobian of the energy, power, and stability responses; only the most influential variables for each objective are retained for optimization instead of searching the full design space at once.
+
+#### BESS Robustness Evaluation Framework
+
 1. Electrochemical–Thermal Driver Model
 The cell behavior is resolved using a Doyle-Fuller-Newman (DFN) electrochemical framework coupled with a lumped thermal model.
 This captures the co-evolution of state of charge (SOC), state of health (SOH) degradation trajectory, and transient thermal fields $T(t)$ under complex, multi-stage charge-discharge cycling.
@@ -68,44 +86,12 @@ The spatial temperature and stoichiometric gradients act as drivers for mechanic
 Deformation-producing strains are resolved along the electrode thickness axis to evaluate structural fatigue.
 A hard constraint-based robustness score is computed by comparing the maximum spatial strain against a critical lower-bound failure envelope ($\epsilon_{crit}$), which represents the minimum strain at which irreversible physical degradation initiates. If the local induced strain exceeds this critical envelope, mechanical failure is triggered, and the cycle-life endurance metric ($n_{crit}$, $t_{crit}$) is evaluated.
 
-### DFN-Based NFPP Cell Optimization Framework
-Methodological Scope Statement
-This work presents a multiphysics optimization framework for NFPP-based sodium-ion cells, where material variation is restricted to dopant-level and electrolyte (salt/solvent) chemistry, coupled with structural and thermal co-optimization.
 
-Objective Definition
-The cell design is optimized using a hierarchical Material-Structural framework. The primary objective is to discover chemistry modifications (dopants/salts/solvents) compatible with the already-validated NFPP architecture while simultaneously fine-tuning structural parameters. Cost reduction and performance gains.
-
-    **Design Space:**
-*   **Structural Parameters ($\theta_s$):** Electrode thickness ($L_c, L_a$), porosity ($\epsilon_c, \epsilon_a, \epsilon_{sep}$), tortuosity ($\tau$), active material loading and particle size ($r_p$).
-*   **Material Parameters ($\theta_m$):** NFPP fraction, conductive carbon fraction, and electrolyte composition (concentration/salts)
-
-1. Stage A-C: Layered Material Mapping & Physics Framework
-This phase resolves performance properties for chemistry modifications using a decoupled architecture: a **Material Mapping Engine** for data resolution and a **Physics Layer** for property-to-parameter transformation.
-*   **Decoupled Mapping Engine:** The framework implements a prioritized resolution flow (OQMD Exact $\rightarrow$ MP Exact $\rightarrow$ Class Baselines) for a fixed candidate space (Mn/Cr/Ni dopants, NaBOB/NaTCP salts, MTMS functionalization). Strict stability-sorting ensures ground-state accuracy.
-*   **Physics Channel Models:** Performance deltas are derived through channel-specific physics models: Nernstian proxies for voltage shifts ($ΔV \propto -ΔE_f$), exponential thermal activation mapping for conductivity ($\sigma \propto \exp(-E_g/2kT)$), and interphase kinetic models for SEI growth, all scaled by a bounded stability realization factor.
-*   **Electrolyte & Fluorine Reduction:** Selection of non-fluorinated salts to reduce environmental burden and cost. Primary candidates include **NaBOB** (Sodium bis(oxalato)borate) for stability and **NaTCP** (Sodium tricyanomethanide) for high performance.
-*   **Electrode Doping:** Fe-site doping for cathodes using **Cr** (Cr³⁺ stabilizer), **Mn** (voltage booster), and **Ni** is evaluated via sensitivity-based optimization.
-*   **Alkyl Silane Functionalization:** Implementation of hard carbon electrode functionalization using **methyltrimethoxysilane (MTMS)**. This process replaces surface –OH groups with –Si–O–R groups on the hard carbon electrode, increasing hydrophobicity and promoting a more uniform SEI layer. The model accounts for reduced SEI kinetics (slower growth and lower irreversible capacity fade), slower interfacial resistance growth over cycles, and optimized exchange current density resulting from improved surface wetting and local ion accessibility.
-
-2. Stage D: Electrochemical Projection Layer
-Selected material modifications are translated into DFN-compatible perturbations through a physics-based parameter update stage rather than a simple multiplicative rescaling. For each candidate material pair, the workflow computes thermodynamic, transport, kinetic, and structural deltas, and applies them to the baseline parameter set using the implementation's transform routine:
-$\theta' = \mathcal{T}(\theta_{base}, \Delta \theta_{material})$
-where $\mathcal{T}$ denotes the parameter-mapping step used to preserve consistency with the calibrated DFN model.
-
-3. Stage E-F: Sensitivity-Driven Optimization & Validation
-The projected design space ($\theta = [\theta_s, \theta_m]$) is explored with a hierarchical workflow that combines sensitivity screening, objective-specific SG-CEM refinement, and expensive stability filtering. In the implementation, the design vector is first perturbed around a nominal point to estimate the Jacobian of the energy, power, and stability responses; only the most influential variables for each objective are retained for optimization instead of searching the full design space at once.
-*   **Phase 1: Sensitivity Screening:** For each material combination, the code computes the Jacobian of the three objective responses around the nominal design, normalizes the sensitivity magnitudes, and keeps only the variables whose normalized influence exceeds the objective-specific threshold (approximately 50% of the largest sensitivity).
-*   **Phase 2: Objective-Specific Optimization:** Three separate single-objective searches are executed with a Sensitivity-Guided Cross-Entropy Method (SG-CEM) on the reduced active-variable sets. Each objective is evaluated from DFN-based metrics and scaled using a baseline reference value; infeasible configurations are penalized, including thermal-limit violations and the electrode-thickness ordering constraint.
-*   **Phase 3: Candidate Filtering:** The optimized candidates are re-evaluated with the expensive thermo-mechanical stability solver. Only designs that pass the PDE-based strain check remain eligible for ranking.
-*   **Phase 4: Final Design Composition:** Among the retained candidates, the point with the highest stability score is selected as the dominant design, and the final representative point is formed by blending this best candidate with the mean of the valid set using an 80/20 weighting to improve robustness.
-*   **Phase 5: Validation:** The selected configuration is re-simulated with the DFN workflow, and the final outputs include the chosen material pair, representative design vector, sensitivity matrix, and performance metrics used for downstream assessment. While this work focuses on a foundational design space, the cell architecture remains amenable to further performance enhancement via composite electrode structuring, advanced pore network engineering, perturbing other dopant sites (beyond the Fe-site), and exploring a broader range of electrolyte systems (solvents and additives) to further enhance cycle life and energy density. The current optimization scope is intentionally streamlined to accommodate the computational constraints of the DFN solver while effectively demonstrating the viability of physics-based optimization for enhancing the cost-efficiency and performance of sodium-ion energy storage systems.
-* **Computed cell-level performance metrics include:**  Energy capacity (kWh), Nominal voltage (V), Continuous current (A), Peak current (A), Charge time (h or min under rated C-rate), Power capability (kW or C-rate equivalent), Cycle life (cycles to end-of-life under defined SOH threshold) 
+*   **Limitations 5:  While this work focuses on a foundational design space, the cell architecture remains amenable to further performance enhancement via composite electrode structuring, advanced pore network engineering, perturbing other dopant sites (beyond the Fe-site), and exploring a broader range of electrolyte systems (solvents and additives) to further enhance cycle life and energy density. The current optimization scope is intentionally streamlined to accommodate the computational constraints of the DFN solver.
+  
 
 ---
-
-# NFPP Sodium-Ion BESS Performance Benchmarking and Latent Distribution Network State Estimation Using Network Realization Signatures
-
-# 1. Research Objective
+### Distributed Dynamic State Estimation Using Lantent Network Realization Signatures (core contribution)
 
 The objective of this work is to determine whether the internal operating state and structural characteristics of an unknown downstream distribution network can be inferred solely from synchronized electrical measurements acquired at the known distribution station boundary.
 
@@ -127,7 +113,7 @@ The emphasis is therefore on discovering which hidden network properties are ele
 
 ---
 
-# 2. System Model
+#### 2. System Model
 
 ## Known Plant for Latent Network Realization
 
@@ -173,131 +159,17 @@ The plant model contains strictly distribution network elements and local source
 * **Fixed Set of Transformers**: Step-down distribution transformers whose primary-side terminals serve as the boundary measurement interfaces.
 * **Measurement and Monitoring Devices**: Electrical sensors capturing voltage, current, active/reactive power, and sequence components at each feeder head and transformer primary terminal.
 
-No BESS benchmarking or BESS-specific multi-physics digital twins are modeled within this system layer; BESS evaluations are kept separate at the electrochemical layer.
-
 ---
 
-# 3. Assumptions
-
-## Known
-
-✓ Distribution station configuration
-
-✓ Swing bus voltage
-
-✓ Source/generator model
-
-✓ Distribution transformer parameters
-
-✓ Feeder impedances
-
-✓ Feeder lengths
-
-✓ Transformer locations
-
-✓ Nominal voltage levels
-
-✓ Load model categories
-
----
-
-## Unknown
-
-✗ Downstream buses
-
-✗ Downstream topology
-
-✗ Feeder branching structure
-
-✗ Switch status
-
-✗ Customer connectivity
-
-✗ Actual customer loading
-
-✗ Time-varying load dynamics
-
----
-
-# 4. Simulation Platform
-
-## Primary Simulator
-
-OpenDSS is used to model the distribution station and downstream distribution network.
-
-It provides
-
-* Three-phase power flow
-* Quasi-static time-series simulation
-* Distribution feeder modelling
-* Distribution transformer modelling
-* Voltage regulator operation
-* Capacitor bank switching
-* Load switching
-* Protection device modelling
-* Python integration for automated simulation studies
-
----
-
-# 5. Hybrid Simulation Framework
-
-The proposed simulation framework combines quasi-static and transient analyses.
-
-```text
-              OpenDSS
-
-      Distribution Station Model
-
-                │
-
-      Operating Point Solution
-
-                │
-
-      Operating Condition Generator
-
-                │
-
-    Optional Electromagnetic Simulator
-
-                │
-
-      Voltage & Current Waveforms
-
-                │
-
-      Signal Processing Pipeline
-
-                │
-
-        Feature Extraction
-
-                │
-
-Distributed Dynamic State Estimation
-```
-
-The transient simulator, where used, reproduces waveform responses associated with
-
-* Transformer energization
-* Capacitor switching
-* Motor starting
-* Feeder switching
-* Temporary faults
-
-These simulations complement the steady-state information obtained from OpenDSS.
-
----
-
-# 6. Measurement Architecture
+#### 3. Measurement Architecture
 
 Measurements are obtained from two sensing layers: feeder monitoring and transformer edge monitoring.
 
-## A. Feeder Measurements
+**A. Feeder Measurements**
 
 Each outgoing feeder is instrumented to acquire
 
-### Electrical Quantities
+##### Electrical Quantities
 
 * Three-phase voltage magnitude and phase angle
 * Three-phase current magnitude and phase angle
@@ -306,7 +178,7 @@ Each outgoing feeder is instrumented to acquire
 * Apparent power ((S))
 * Power factor
 
-### Network Quality Metrics
+##### Network Quality Metrics
 
 * Frequency
 * Rate of Change of Frequency (ROCOF)
@@ -314,7 +186,7 @@ Each outgoing feeder is instrumented to acquire
 * Current unbalance
 * Positive-, negative-, and zero-sequence components
 
-### Dynamic Measurements
+##### Dynamic Measurements
 
 Where transient simulation is available
 
@@ -325,13 +197,13 @@ Where transient simulation is available
 
 ---
 
-## B. Transformer Measurements
+**B. Transformer Measurements**
 
 Each distribution transformer serves as an edge measurement node representing the interface to an unknown downstream network.
 
 Measurements include
 
-### Primary Electrical Measurements
+##### Primary Electrical Measurements
 
 * High-voltage terminal voltage magnitude and phase angle
 * High-voltage terminal current magnitude and phase angle
@@ -340,7 +212,7 @@ Measurements include
 * Apparent power
 * Power factor
 
-### Transformer Operating State
+##### Transformer Operating State
 
 * Transformer loading
 
@@ -360,7 +232,7 @@ Loading=\frac{S}{S_{rated}}
 Z=\frac{V}{I}
 ]
 
-### Dynamic Quantities
+##### Dynamic Quantities
 
 Where supported
 
@@ -372,9 +244,35 @@ Where supported
 
 ---
 
-# 7. Operating Scenario Generation
+**4. Distribution Network Simulation And Station Modeling**
 
-Rather than attempting to recover a predefined downstream network, the simulation framework systematically perturbs the unknown downstream network while maintaining a fixed upstream distribution station.
+The simulation framework systematically perturbs the unknown downstream network while maintaining a fixed upstream distribution station.
+
+OpenDSS is used to model the distribution station and downstream distribution network.
+
+It provides
+
+* Three-phase power flow
+* Quasi-static time-series simulation
+* Distribution feeder modelling
+* Distribution transformer modelling
+* Voltage regulator operation
+* Capacitor bank switching
+* Load switching
+* Protection device modelling
+* Python integration for automated simulation studies
+
+---
+
+A transient simulator, was used to reproduce waveform responses associated with
+
+* Transformer energization
+* Capacitor switching
+* Motor starting
+* Feeder switching
+* Temporary faults
+
+These simulations complement the steady-state information obtained from OpenDSS.
 
 The perturbation process modifies hidden network characteristics including
 
@@ -393,58 +291,13 @@ Each perturbed network is simulated under a range of operating conditions to gen
 
 The objective is to determine how variations in hidden network structure and operating state manifest in the measurable electrical response at the known distribution station boundary.
 
-This produces a comprehensive dataset relating hidden network perturbations to observable boundary measurements for subsequent realization and distributed dynamic state estimation.
+The simulation produces a comprehensive dataset relating hidden network perturbations to observable boundary measurements for subsequent realization and distributed dynamic state estimation.
 
 ---
 
-# 8. Feature Extraction
+**5. Distributed Dynamic State Estimation**
 
-Rather than using raw measurements directly, the synchronized measurements are transformed into physics-informed features that are expected to generalize across operating conditions.
-
-## Steady-State Features
-
-* Voltage magnitude
-* Voltage phase angle
-* Current magnitude
-* Current phase angle
-* Active and reactive power flow
-* Apparent power
-* Power factor
-* Feeder losses
-* Transformer loading
-* Voltage regulation
-* Sequence components
-* Equivalent impedance estimates
-* Electrical distance indicators
-* Network stiffness indices
-
-## Dynamic Features
-
-Where transient simulations are available
-
-* Fast Fourier Transform (FFT) spectra
-* Wavelet coefficients
-* Spectral centroid
-* Dominant oscillation frequencies
-* Oscillation damping ratios
-* ROCOF
-* Voltage recovery time
-* Current recovery time
-* Phase-angle evolution
-* Switching signatures
-* Motor-start signatures
-* Capacitor-switching signatures
-* Transformer energization signatures
-* Cross-correlation between feeder measurements
-* Mutual information between sensing locations
-
-These features collectively describe both the steady-state and dynamic behaviour of the hidden downstream network.
-
----
-
-# 9. Distributed Dynamic State Estimation
-
-The realization state is not prescribed a priori but is inferred from synchronized feeder and transformer measurements.
+The network state is inferred from synchronized feeder and transformer measurements.
 
 The estimation problem is expressed as
 
@@ -459,8 +312,6 @@ The estimated realization state may include
 * Effective electrical distance to active loads
 * Aggregate network impedance
 * Phase-coupling indices
-* Voltage sensitivity indices
-* Reactive power support indices
 * Network stiffness
 * Transformer loading state
 * Feeder coherency
@@ -470,11 +321,12 @@ The estimated realization state may include
 
 These latent coordinates evolve continuously as the hidden downstream network changes and collectively characterize its instantaneous operating condition.
 
+The synchronized measurements are transformed into physics-informed features that are expected to generalize across operating conditions
+
 ---
 
-# 10. Validation Strategy
 
-The methodology is validated by evaluating the realization algorithm over a large ensemble of simulated downstream network realizations generated through systematic perturbation of hidden network parameters.
+**6. Validation**
 
 Validation focuses on answering the following research questions.
 
@@ -494,6 +346,5 @@ Validation focuses on answering the following research questions.
 
    Which classes of downstream perturbations—including topology changes, load redistribution, switching events, transformer loading, and line parameter variations—produce measurable changes at the distribution station boundary?
 
-Performance is assessed using metrics including latent state estimation error, observability of hidden parameters, sensitivity to measurement noise, robustness across operating conditions, computational efficiency, and scalability with increasing downstream network complexity.
 
 The validation establishes the practical limits of boundary-based realization and identifies the sensing architecture required for distributed dynamic state estimation in partially observable distribution networks.
