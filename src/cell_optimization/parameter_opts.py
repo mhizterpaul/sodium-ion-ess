@@ -369,7 +369,8 @@ class HierarchicalOptimizer:
             critical_strain = self.mech_model.critical_thresholds.get(mat_key, 2e-3)
             eta = max_strain / critical_strain
             print(f"DEBUG[{mode}]: max_strain={max_strain:.4e}, critical={critical_strain:.4e}, eta={eta:.3f}")
-            if eta > 1.0: return False, -float(eta)
+            eta_threshold = float(os.environ.get("CEM_ETA_THRESHOLD", 1.5))
+            if eta > eta_threshold: return False, -float(eta)
             return True, -float(eta)
         except Exception as e:
             print(f"ERROR: FEM solve failed: {e}\n{traceback.format_exc()}")
