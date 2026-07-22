@@ -7,4 +7,5 @@ __pycache__/
 # Run and build artifacts
 result.json
 material_cache.json
+final_validation.json
 *.egg-info/
