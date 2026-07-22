@@ -24,6 +24,8 @@ class BESSScenarioGenerator:
     @staticmethod
     def get_blackout_scenario(v_max):
         # Issue 13: Realistic grid loss during charging
+        if os.environ.get("CEM_FAST_RUN") == "True":
+            return pybamm.Experiment(["Charge at 0.5C for 1 minutes"])
         return pybamm.Experiment([
             BESSScenarioGenerator.charge_step("1C", limit=v_max),
             "Rest for 60 minutes"
@@ -32,6 +34,8 @@ class BESSScenarioGenerator:
     @staticmethod
     def get_dispatch_scenario(v_min, v_max):
         # Issue 3, 10: Multi-stage realistic BESS dispatch
+        if os.environ.get("CEM_FAST_RUN") == "True":
+            return pybamm.Experiment(["Discharge at 0.5C for 1 minutes"])
         return pybamm.Experiment([
             BESSScenarioGenerator.discharge_step("0.5C", limit=v_min),
             "Rest for 20 minutes",
@@ -163,7 +167,9 @@ class StabilityValidator:
 
         # 3. Varying C-rate Stress Test (Requested by user)
         print("  Running Varying C-rate Stress Test (Oscillating profile)...")
-        profile = self.electro_model.get_varying_c_rate_profile(base_c_rate=1.0, duration=1800, n_points=50)
+        duration_val = 60 if os.environ.get("CEM_FAST_RUN") == "True" else 1800
+        n_points_val = 5 if os.environ.get("CEM_FAST_RUN") == "True" else 50
+        profile = self.electro_model.get_varying_c_rate_profile(base_c_rate=1.0, duration=duration_val, n_points=n_points_val)
         res_varying = self.run_full_simulation(self.optimized_params, c_rate=profile)
 
         # 4. Physically Meaningful Efficiency Metrics (Issue 4, 5, 12)

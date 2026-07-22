@@ -140,9 +140,8 @@ class CrossEntropyOptimizer:
                 self.cache[cache_key] = result
                 return result
 
-            # Run parallel evaluations
-            with ThreadPoolExecutor() as executor:
-                results = list(executor.map(evaluate_one, samples_z))
+            # Run parallel evaluations sequentially to avoid PyBaMM/IDAKLU/Casadi thread-safety deadlocks
+            results = [evaluate_one(s) for s in samples_z]
 
             scores = np.array([r[0] for r in results])
             feasibles = np.array([r[1] for r in results])

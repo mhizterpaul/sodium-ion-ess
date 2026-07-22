@@ -1,0 +1,201 @@
+{
+  "optimization": {
+    "materials": {
+      "cathode": {
+        "name": "Mn-doped-x0.05",
+        "formula": "Fe",
+        "properties": {
+          "stability": 0.013177996400303546,
+          "formation_energy": 0.013177996400303546,
+          "band_gap": 0.0,
+          "volume_per_atom": 11.012850481794564,
+          "uncertainty_formation_energy": 0.04342458707950169,
+          "ionic_radius": 0.78,
+          "resolved_formula": "Fe"
+        }
+      },
+      "electrolyte": {
+        "salt": "NaBOB",
+        "properties": {
+          "stability": 0.004491031361055524,
+          "formation_energy": 0.004491031361055524,
+          "band_gap": 1.4970225588254669,
+          "volume_per_atom": 7.178840231308957,
+          "uncertainty_formation_energy": 0.03187737926230992,
+          "ionic_radius": 0.41,
+          "resolved_formula": "B"
+        }
+      }
+    },
+    "bases": {
+      "cathode": {
+        "formula": "Fe",
+        "properties": {
+          "stability": 0.013177996400303546,
+          "formation_energy": 0.013177996400303546,
+          "band_gap": 0.0,
+          "volume_per_atom": 11.012850481794564,
+          "uncertainty_formation_energy": 0.04342458707950169,
+          "ionic_radius": 0.78,
+          "resolved_formula": "Fe"
+        },
+        "source": "OQMD_SYSTEM"
+      },
+      "salt": {
+        "formula": "NaPF6",
+        "properties": {
+          "stability": 0.018775389610353146,
+          "formation_energy": -3.001088610964427,
+          "band_gap": 7.9665436609202835,
+          "volume_per_atom": 11.35763915492148,
+          "uncertainty_formation_energy": 0.03274469525305594,
+          "ionic_radius": 1.14625,
+          "resolved_formula": "NaPF6"
+        },
+        "source": "OQMD"
+      },
+      "interface": {
+        "formula": "C",
+        "properties": {
+          "stability": 0.007929915474631304,
+          "formation_energy": 0.007929915474631304,
+          "band_gap": 0.5955858994464968,
+          "volume_per_atom": 10.343998492391115,
+          "uncertainty_formation_energy": 0.002157271486483405,
+          "ionic_radius": 0.3,
+          "resolved_formula": "C"
+        },
+        "source": "OQMD_SYSTEM"
+      }
+    },
+    "design_specs_representative": {
+      "Positive electrode thickness [m]": 8.999999999999999e-05,
+      "Negative electrode thickness [m]": 8.999999999999999e-05,
+      "Positive electrode porosity": 0.3952883079085627,
+      "Negative electrode porosity": 0.31443630212993,
+      "Positive particle radius [m]": 5.028538238799745e-06,
+      "Negative particle radius [m]": 5.050000000000002e-06,
+      "Separator porosity": 0.49498551906619004,
+      "carbon_fraction": 0.08499999999999999
+    },
+    "opt_designs_per_objective": {
+      "energy": {
+        "Positive electrode thickness [m]": 8.999999999999999e-05,
+        "Negative electrode thickness [m]": 8.999999999999999e-05,
+        "Positive electrode porosity": 0.37357670206309,
+        "Negative electrode porosity": 0.3519559434426781,
+        "Positive particle radius [m]": 5.050000000000001e-06,
+        "Negative particle radius [m]": 5.050000000000001e-06,
+        "Separator porosity": 0.4875974016297615,
+        "carbon_fraction": 0.08499999999999999
+      },
+      "power": {
+        "Positive electrode thickness [m]": 8.999999999999999e-05,
+        "Negative electrode thickness [m]": 8.999999999999999e-05,
+        "Positive electrode porosity": 0.4004421474281038,
+        "Negative electrode porosity": 0.30881450680817474,
+        "Positive particle radius [m]": 5.050000000000001e-06,
+        "Negative particle radius [m]": 5.050000000000001e-06,
+        "Separator porosity": 0.4951681064894683,
+        "carbon_fraction": 0.08499999999999999
+      },
+      "stability": {
+        "Positive electrode thickness [m]": 8.999999999999999e-05,
+        "Negative electrode thickness [m]": 8.999999999999999e-05,
+        "Positive electrode porosity": 0.35,
+        "Negative electrode porosity": 0.35,
+        "Positive particle radius [m]": 4.728073581996163e-06,
+        "Negative particle radius [m]": 5.050000000000001e-06,
+        "Separator porosity": 0.5,
+        "carbon_fraction": 0.08499999999999999
+      }
+    },
+    "combined_deltas_representative": {
+      "thermodynamic": {
+        "voltage_boost": -0.0,
+        "stability_shift": 0.0
+      },
+      "kinetic": {
+        "exchange_current_log_delta": 0.0
+      },
+      "transport": {
+        "diffusivity_log_delta": 0.0,
+        "conductivity_log_delta": 0.0,
+        "electrolyte_conductivity_log_delta": -0.6272670072330566,
+        "electrolyte_diffusivity_log_delta": 0.0036792848114053445
+      },
+      "structural": {
+        "strain": 0.0
+      }
+    },
+    "sensitivity_matrix": [
+      [
+        0.15884101207563842,
+        0.09289250283428532,
+        5.1633419354724115,
+        5.012915908729766,
+        -0.1257419742506373,
+        -0.7272865040863775,
+        6.220208192111446,
+        0.41037846243541237
+      ],
+      [
+        -0.09468937609113949,
+        -0.09006293363089664,
+        1.5435358635151888,
+        1.54525084688828,
+        -0.04803812994946802,
+        -0.04728442961177137,
+        2.354686384746785,
+        0.014365868370447251
+      ],
+      [
+        -0.7063919234795433,
+        0.01668853517600167,
+        -0.5550264860332278,
+        0.044305780768638676,
+        3.1136948450694035,
+        0.184857823271045,
+        -0.12262128471718414,
+        0.0763707661022296
+      ]
+    ],
+    "parameter_grouping": {
+      "Energy": [
+        "Positive electrode porosity",
+        "Negative electrode porosity",
+        "Separator porosity"
+      ],
+      "Power": [
+        "Positive electrode porosity",
+        "Negative electrode porosity",
+        "Separator porosity"
+      ],
+      "Stability": [
+        "Positive particle radius [m]"
+      ],
+      "Coupled": [
+        "Positive electrode porosity",
+        "Negative electrode porosity",
+        "Separator porosity"
+      ]
+    }
+  },
+  "validation": {
+    "energy_wh": 0.5715017017639608,
+    "power_w": 15.030848138835342,
+    "capacity_ah": 0.5844279118491218,
+    "voltage_avg": 1.1050485493192477,
+    "max_temp_k": 317.13695307717967,
+    "max_strain": 0.0013587253544700398,
+    "max_stress_pa": 13587253.544700397,
+    "mechanical_integrity_factor": 0.6793626772350199,
+    "sei_growth_m": 1.3287806406617019e-12,
+    "baseline_performance": {
+      "energy": 26.929778655006633,
+      "power": 30.705711149332302,
+      "max_strain": 0.01912944386441003,
+      "mechanical_integrity_factor": 9.564721932205014
+    }
+  }
+}
